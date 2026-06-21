@@ -1,4 +1,5 @@
 import csv
+import functools
 from typing import List
 
 import pandas as pd
@@ -69,6 +70,8 @@ def test_buffer():
         _clean_row(item, cleaned)
 
     print(cleaned, 'length', len(cleaned))
+
+@functools.cache
 def load_csv():
 
 
@@ -117,10 +120,23 @@ def load_csv():
     headers = data[0] # extract headers
     data = pd.DataFrame(data[1:])
     data.columns = headers
+    # convert values to correct datatype
+    data["Popularity"] = pd.to_numeric(data["Popularity"], errors="coerce")
+    data["Vote_Count"] = pd.to_numeric(data["Vote_Count"], errors="coerce").astype("Int64")
+    data["Vote_Average"] = pd.to_numeric(data["Vote_Average"], errors="coerce")
+
+    data["Genre_List"] = data["Genre"].apply(lambda x: [g.strip() for g in str(x).split(",")])
+
+    # convert here days into python's datetime
+    data["Release_Date"] = pd.to_datetime(
+        data["Release_Date"],
+        dayfirst=True,
+        errors="coerce"
+    )  
     return data
 
 #test_buffer()
-# df = load_csv()
+# data = load_csv()
 # print("len", len(df))
 # headers = df[0] # extract headers
 # df = pd.DataFrame(df[1:])

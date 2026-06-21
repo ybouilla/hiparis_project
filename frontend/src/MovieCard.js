@@ -24,7 +24,7 @@ export default function MovieCard({ movie }) {
           <Typography variant="body2" color="text.secondary">
             ⭐ {movie.Vote_Count} | ⭐ {movie.Vote_Average} | 🔥{" "}
             {Math.round(movie.Popularity)} | 📅{" "}
-            {movie.Release_Date?.split("T")[0]} |{" "}
+            {new Date(movie.Release_Date)?.toISOString().split("T")[0]} |{" "}
             Language : {movie.Original_Language}
           </Typography>
 

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   Box,
   AppBar,
@@ -10,10 +10,15 @@ import {
   FormControlLabel,
   Button,
   Stack,
+  Chip,
 } from "@mui/material";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import axios from 'axios';
+import qs from 'qs';
 //import moviesData from "./movies.json";
 import MovieCard from "./MovieCard";
+import LanguageSelector from "./LanguageSelector";
 
 const moviesData = [
   {
@@ -55,40 +60,28 @@ const PAGE_SIZE = 20;
 export default function App() {
   const df = moviesData;
 
+  // react states
+  const [language, setLanguage] = useState("");
+  const [allGenres, setAllGenres] = useState([]);
   const [search, setSearch] = useState("");
+  // const [allGenres, setAllGenres] = useState([]);
   const [selectedGenres, setSelectedGenres] = useState([]);
   const [page, setPage] = useState(1);
-
-
-  // Handle form submission
-  const handleSubmit = async (e) => {
-      e.preventDefault();
-      
-      try {
-        const request = await axios.get('/movies',  {
-          headers: {
-            // No need to set 'Content-Type', axios will do it for us
-          },
-        });
-        console.log('got response', request)
-
-        
-        //setResponse(request.data)
-      } catch (error) {
-        console.error('Upload error:', error);
-        //setUploadMessage('Error uploading file');
-      } finally {
-        // setUploading(false);
-        // setDateValue(null)
-      }
-  };
+  const [movies, setMovies] = useState([] ); //{"message": "ok", "movies":""});
+  const [totalMovies, setTotalMovies] = useState(PAGE_SIZE);
+  const [openSideBar, setOpenSideBar] = useState(true);
+ 
   const genres = useMemo(() => {
     const set = new Set();
-    df.forEach((m) => {
+    console.log("movies =", movies);
+    console.log("lang memo", language)
+    console.log("is array?", Array.isArray(movies));
+    if (!Array.isArray(movies)) return [];
+    movies.forEach((m) => {
       m.Genre?.split(",").forEach((g) => set.add(g.trim()));
     });
     return [...set].sort();
-  }, [df]);
+  }, [movies]);
 
   const toggleGenre = (genre) => {
     setPage(1);
@@ -98,40 +91,120 @@ export default function App() {
         : [...prev, genre]
     );
   };
+  // searching for movies
+  const searchMovies = async (e) => {
+      //e.preventDefault();
+      
+      try {
+        
+        const request = await axios.get('/movies',  {
+          
+          params: {"title": search.toLowerCase(), "start": start, "end": Math.min(start + PAGE_SIZE, totalMovies)},
+          headers: {
+            // No need to set 'Content-Type', axios will do it for us
+          },
+        });
+        console.log('got response', request)
+        setMovies(request.data.movies)
+      } catch (error) {
+        console.error('Fetching error:', error);
+        //setUploadMessage('Error uploading file');
+      } finally {
+        // setUploading(false);
+        // setDateValue(null)
+      }
+  };
 
   const filtered = useMemo(() => {
-    let data = [...df];
+    let data = [...movies];
 
-    if (search) {
-      data = data.filter((m) =>
-        m.Title.toLowerCase().includes(search.toLowerCase())
-      );
-    }
+    // if (search) {
+    //   searchMovies()
+      // data = data.filter((m) =>
+      //   m.Title.toLowerCase().includes(search.toLowerCase())
+      // );
+    // }
 
-    if (selectedGenres.length) {
-      data = data.filter((m) =>
-        selectedGenres.some((g) => m.Genre?.includes(g))
-      );
-    }
-    console.log(df[0]);
+    // if (selectedGenres.length) {
+    //   data = data.filter((m) =>
+    //     selectedGenres.some((g) => m.Genre?.includes(g))
+    //   );
+    // }
+    console.log(movies[0]);
     console.log(
   "search:",
   search,
   "first title:",
-  df[0]?.Title
+  movies[0]?.Title
 );
     
-    return data.sort((a, b) => b.Popularity - a.Popularity);
-  }, [df, search, selectedGenres]);
+    return data; //.sort((a, b) => b.Popularity - a.Popularity);
+  }, [movies, search, selectedGenres]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalMovies / PAGE_SIZE));
 
   const start = (page - 1) * PAGE_SIZE;
-  const pageMovies = filtered.slice(start, start + PAGE_SIZE);
+  const pageMovies = filtered //.slice(start, start + PAGE_SIZE);
 
-  const goPrev = () => setPage((p) => Math.max(1, p - 1));
-  const goNext = () => setPage((p) => Math.min(totalPages, p + 1));
+  const goPrev = () => setPage((p) => { return Math.max(1, p - 1);
+  });
+  const goNext = () => setPage((p) => Math.min(totalPages, p + 1)); 
 
+
+   // Getting movies
+  const collectMovies = async (e) => {
+      //e.preventDefault();
+      
+      try {
+        console.log("debug lang", language)
+        const request = await axios.get('/allmovies',  {
+          
+          params: {"start": start,
+                   "end": Math.min(start + PAGE_SIZE, totalMovies),
+                   "title": search,
+                  "genre": selectedGenres,
+                  "lang": language
+                },
+          headers: {
+            // No need to set 'Content-Type', axios will do it for us
+          },
+           paramsSerializer: (params) =>
+            qs.stringify(params, { arrayFormat: "repeat" })
+        });
+        console.log('got response', request)
+
+        setMovies(request.data.movies)
+        setTotalMovies(request.data.total_movies);
+        setAllGenres(request.data.all_genres);
+
+      } catch (error) {
+        console.error('Fetching error:', error);
+
+      } finally {
+
+      }
+  };
+  
+
+  // trigger collectMovie
+  useEffect(() => {
+       
+
+      collectMovies();
+      console.log("page changed", page);
+  console.log("start", (page - 1) * PAGE_SIZE);
+    }, [page, search, selectedGenres, language]);
+
+  // trigger search for movies
+//   useEffect(() => {
+//   if (!search) return;
+
+//   const timer = setTimeout(() => {
+//     searchMovies();
+//   }, 300);
+
+//   return () => clearTimeout(timer);
+// }, [search]);
   return (
     <Box sx={{ display: "flex" }}>
       {/* Top bar */}
@@ -143,17 +216,23 @@ export default function App() {
 
       {/* Sidebar */}
       <Drawer
-        variant="permanent"
-        sx={{
-          width: 280,
-          flexShrink: 0,
-          "& .MuiDrawer-paper": {
-            width: 280,
-            p: 2,
-            mt: 8,
-          },
-        }}
-      >
+          variant="permanent"
+          sx={{
+            width: openSideBar ? 280 : 72,
+            flexShrink: 0,
+            transition: "width 0.3s",
+            "& .MuiDrawer-paper": {
+              width: openSideBar ? 280 : 72,
+              p: openSideBar ? 2 : 1,
+              mt: 8,
+              overflowX: "hidden",
+              transition: "width 0.3s",
+            },
+          }}
+        >
+        <Button onClick={() => setOpenSideBar((prev) => !prev)}>
+          {openSideBar ? "Collapse": "Display"}
+        </Button>
         <TextField
           label="Search title"
           variant="outlined"
@@ -171,20 +250,42 @@ export default function App() {
           Genres
         </Typography>
 
-        <Box sx={{ maxHeight: "70vh", overflow: "auto" }}>
-          {genres.map((g) => (
-            <FormControlLabel
-              key={g}
-              control={
-                <Checkbox
-                  checked={selectedGenres.includes(g)}
-                  onChange={() => toggleGenre(g)}
-                />
-              }
-              label={g}
-            />
-          ))}
+
+        <Box
+          sx={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 1,
+            maxHeight: "70vh",
+            overflowY: "auto",
+          }}
+        >
+          {allGenres.map((g) => {
+            const selected = selectedGenres.includes(g);
+
+            return (
+              <Chip
+                key={g}
+                label={g}
+                clickable
+                color={selected ? "primary" : "default"}
+                variant={selected ? "filled" : "outlined"}
+                onClick={() => toggleGenre(g)}
+                sx={{
+                  borderRadius: "16px",
+                  fontWeight: 500,
+                }}
+              />
+            );
+          })}
         </Box>
+        <Typography variant="h6" sx={{ mt: 2 }}>
+          Original Languages
+        </Typography>
+        <LanguageSelector
+          value={language}
+          onChange={setLanguage}
+        />
       </Drawer>
 
       {/* Main content */}
@@ -209,13 +310,35 @@ export default function App() {
       </Typography>
 
       <Typography variant="body2" color="text.secondary">
-        <strong>{filtered.length + 50}</strong> movies found · showing{" "}
+        <strong>{totalMovies}</strong> movies found · showing{" "}
         <strong>
           {start + 1}–{Math.min(start + PAGE_SIZE, filtered.length)}
         </strong>
       </Typography>
     </Box>
 
+    {/* Pagination (head of page) */}
+    <Box
+      sx={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        gap: 2,
+        py: 2,
+      }}
+    >
+      <Button onClick={goPrev} disabled={page === 1} variant="outlined">
+        ⬅️ Previous
+      </Button>
+
+      <Typography sx={{ minWidth: 120, textAlign: "center" }}>
+        Page {page} / {totalPages}
+      </Typography>
+
+      <Button onClick={goNext} disabled={page === totalPages} variant="outlined">
+        Next ➡️
+      </Button>
+    </Box>
     {/* Movies */}
     <Stack spacing={2} sx={{ mb: 3 }}>
       {pageMovies.map((movie, i) => (
@@ -223,7 +346,7 @@ export default function App() {
       ))}
     </Stack>
 
-    {/* Pagination */}
+    {/* Pagination foot of page */}
     <Box
       sx={{
         display: "flex",

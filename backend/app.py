@@ -6,8 +6,8 @@ from flask import Flask, jsonify, request, redirect
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
 import os
-
-
+import pandas as pd
+from backend.load_csv import load_csv
 
 
 UPLOAD_FOLDER = './movies.csv'
@@ -23,55 +23,63 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
 
-@app.route('/movies', methods=['GET'])
+@app.route('/allmovies', methods=['GET'])
 def serve_movies():
+	df = load_csv()
+    
+	n_start = int(request.args.get("start", 0))
+	n_end = int(request.args.get("end",len(df)+1))
+	title = str(request.args.get("title", ""))
+	genre = request.args.getlist("genre", )
+	language = str(request.args.get("lang", ""))
+	best_rated = ""
 
-	movies = [
-  {
-    "Release_Date": "2021-12-15",
-    "Title": "Spider-Man: No Way Home",
-    "Overview": "Peter Parker is unmasked and no longer able to separate his normal life from the high-stakes of being a super-hero. When he asks for help from Doctor Strange the stakes become even more dangerous, forcing him to discover what it truly means to be Spider-Man.",
-    "Popularity": 5083.954,
-    "Vote_Count": 8940,
-    "Vote_Average": 8.3,
-    "Original_Language": "en",
-    "Genre": "Action, Adventure, Science Fiction",
-    "Poster_Url": "https://image.tmdb.org/t/p/original/1g0dhYtq4irTY1GPXvft6k4YLjm.jpg"
-  },
-  {
-    "Release_Date": "2022-03-01",
-    "Title": "The Batman",
-    "Overview": "In his second year of fighting crime, Batman uncovers corruption in Gotham City that connects to his own family while facing a serial killer known as the Riddler.",
-    "Popularity": 3827.658,
-    "Vote_Count": 1151,
-    "Vote_Average": 8.1,
-    "Original_Language": "en",
-    "Genre": "Crime, Mystery, Thriller",
-    "Poster_Url": "https://image.tmdb.org/t/p/original/74xTEgt7R36Fpooo50r9T25onhq.jpg"
-  },
-  {
-    "Release_Date": "2022-02-25",
-    "Title": "No Exit",
-    "Overview": "Stranded at a rest stop in the mountains during a blizzard, a recovering addict discovers a kidnapped child hidden in a car belonging to one of the people inside the building which sets her on a terrifying struggle to identify who among them is the kidnapper.",
-    "Popularity": 2618.087,
-    "Vote_Count": 122,
-    "Vote_Average": 6.3,
-    "Original_Language": "en",
-    "Genre": "Thriller",
-    "Poster_Url": "https://image.tmdb.org/t/p/original/vDHsLnOWKlPGmWs0kGfuhNF4w5l.jpg"
-  }
-]
+	all_genres = sorted(
+						df["Genre"]
+						.dropna()
+						.str.split(",")
+						.explode()
+						.str.strip()
+						.unique()
+					)
+	if title:
+		mask = df["Title"].str.contains(title, case=False, na=False)
+		df = df[mask]
+	if len(genre) > 0 and genre != "[]":
+		
+		print("genre still accessed", len(genre), genre, type(genre))
+		mask = df["Genre"].str.contains("|".join(genre), case=False, na=False)
+		df = df[mask]
+	if language:
+		df = df[df["Original_Language"] == language]
+	movies = df.iloc[n_start:n_end].to_dict(orient="records")
 	resp = {
 		'message': 'ok',
-		'movies': movies
+		'movies': movies,
+		'total_movies': len(df),
+		'all_genres': list(all_genres)
 	}
-
+	
 	return jsonify(resp), 201
 	resp = {
 		'message': 'bad file format'
 	}
 	return jsonify(resp), 422
 
+@app.route("/movies", methods=["GET"])
+def search_movies():
+	df = load_csv()
+	
+	n_start = int(request.args.get("start", 0))
+	n_end = int(request.args.get("end",len(df)+1))
+	#df = pd.DataFrame(movies)
+	title = request.args.get("title", "")
+	results = [
+        movie.to_dict() for i, movie in df.iterrows()
+        if title.lower() in movie["Title"].lower()
+    ]
+
+	return jsonify({"movies": results[n_start:n_end]})
 
 @app.route('/')
 def index():
