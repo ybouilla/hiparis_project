@@ -27,15 +27,14 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 @app.route('/allmovies', methods=['GET'])
 def serve_movies():
 	df = load_csv()
-    
+	min_date = df["Release_Date"].min().year
 	n_start = int(request.args.get("start", 0))
 	n_end = min(int(request.args.get("end",len(df)+1)), len(df)+1)
 	title = str(request.args.get("title", ""))
 	genre = request.args.getlist("genre", )
 	language = str(request.args.get("lang", ""))
 	min_rate = float(request.args.get("score", 0.))
-	date_start = ""
-	date_end = ""
+	dates = request.args.getlist("dates", )
 
 	all_genres = sorted(
 						df["Genre"]
@@ -59,13 +58,20 @@ def serve_movies():
 	if floor(min_rate):
 		print("debug", min_rate)
 		df = df[df["Vote_Average"] >= min_rate]
+	
+	if len(dates) == 2:
+		if dates[0] == dates[1]:
+			dates[1] = 1 + int(dates[1])
+		df = df[(df["Release_Date"].dt.year >= int(dates[0])) & (df["Release_Date"].dt.year < int(dates[1]))]
 
 	movies = df.iloc[n_start:n_end].to_dict(orient="records")
+
 	resp = {
 		'message': 'ok',
 		'movies': movies,
 		'total_movies': len(df),
-		'all_genres': list(all_genres)
+		'all_genres': list(all_genres),
+		'min_date': min_date,
 	}
 	
 	return jsonify(resp), 201

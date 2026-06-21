@@ -14,8 +14,11 @@ import {
   Rating,
   Paper,
   Divider,
+  Slider,
+  IconButton, 
 } from "@mui/material";
-
+import MenuOpenIcon from "@mui/icons-material/MenuOpen";
+import MenuIcon from "@mui/icons-material/Menu";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import axios from 'axios';
@@ -60,7 +63,7 @@ const moviesData = [
   }
 ]
 const PAGE_SIZE = 20;
-
+const min_dates = 1900;
 export default function App() {
   const df = moviesData;
 
@@ -71,17 +74,23 @@ export default function App() {
   // const [allGenres, setAllGenres] = useState([]);
   const [selectedGenres, setSelectedGenres] = useState([]);
   const [page, setPage] = useState(1);
-  const [movies, setMovies] = useState([] ); //{"message": "ok", "movies":""});
+  const [movies, setMovies] = useState([] );
   const [totalMovies, setTotalMovies] = useState(PAGE_SIZE);
   const [openSideBar, setOpenSideBar] = useState(true);
-  const [stars, setStars] = useState(0);
+  const [stars, setStars] = useState(0);  // for rating
+  const [yearRange, setYearRange] = useState([1900, 2026]);
+  const [minDate, setMinDate] = useState(min_dates)
  
+
+
+  
   const genres = useMemo(() => {
     const set = new Set();
     console.log("movies =", movies);
     console.log("lang memo", language)
     console.log("is array?", Array.isArray(movies));
-    if (!Array.isArray(movies)) return [];
+  
+    if (!Array.isArray(movies) || movies.length === 0 || movies) return [];
     movies.forEach((m) => {
       m.Genre?.split(",").forEach((g) => set.add(g.trim()));
     });
@@ -123,18 +132,6 @@ export default function App() {
   const filtered = useMemo(() => {
     let data = [...movies];
 
-    // if (search) {
-    //   searchMovies()
-      // data = data.filter((m) =>
-      //   m.Title.toLowerCase().includes(search.toLowerCase())
-      // );
-    // }
-
-    // if (selectedGenres.length) {
-    //   data = data.filter((m) =>
-    //     selectedGenres.some((g) => m.Genre?.includes(g))
-    //   );
-    // }
     console.log(movies[0]);
     console.log(
   "search:",
@@ -170,6 +167,7 @@ export default function App() {
                   "genre": selectedGenres,
                   "lang": language,
                   "score": stars*2,
+                  "dates": yearRange,
                   // TODO: dates
                 },
           headers: {
@@ -180,10 +178,14 @@ export default function App() {
         });
         console.log('got response', request)
 
-        setMovies(request.data.movies)
+        setMovies(Array.isArray(request.data.movies)
+                  ? request.data.movies
+                  : Array.isArray(request.data)
+                  ? request.data
+                  : [])
         setTotalMovies(request.data.total_movies);
         setAllGenres(request.data.all_genres);
-        
+        setMinDate(request.data.min_date)
 
       } catch (error) {
         console.error('Fetching error:', error);
@@ -196,12 +198,10 @@ export default function App() {
 
   // trigger collectMovie
   useEffect(() => {
-       
 
       collectMovies();
-      console.log("page changed", page);
-  console.log("start", (page - 1) * PAGE_SIZE);
-    }, [page, search, selectedGenres, language, stars]);
+
+    }, [page, search, selectedGenres, language, stars, yearRange]);
 
   // trigger search for movies
 //   useEffect(() => {
@@ -224,105 +224,107 @@ export default function App() {
 
       {/* Sidebar */}
       <Drawer
-          variant="permanent"
-          sx={{
-            width: openSideBar ? 280 : 72,
-            flexShrink: 0,
-            "& .MuiDrawer-paper": {
-              width: openSideBar ? 280 : 72,
-              mt: 8,
-              p: openSideBar ? 2 : 1,
-              overflowX: "hidden",
-              transition: "width 0.3s",
+  variant="permanent"
+  sx={{
+    width: openSideBar ? 280 : 72,
+    flexShrink: 0,
+    "& .MuiDrawer-paper": {
+      width: openSideBar ? 280 : 72,
+      mt: 8,
+      height: "calc(100vh - 64px)",
+      display: "flex",
+      flexDirection: "column",
+      overflow: "hidden",
+      transition: "width 0.3s",
+    },
+  }}
+>
+ 
+  <Box sx={{ p: 2 }}>
+    <IconButton
+      onClick={() => setOpenSideBar((p) => !p)}
+      size="small"
+    >
+      {openSideBar ? "COLLAPSE ": ""}
+      {openSideBar ? <MenuOpenIcon /> : <MenuIcon />}
+  </IconButton>
+  </Box>
 
-              // Important
-              height: "calc(100vh - 64px)", // adjust if your AppBar height differs
-              display: "flex",
-              flexDirection: "column",
-            },
-         }}
-        >
-          <Box
-          sx={{
-            flex: 1,
-            overflowY: "auto",
-            pr: 1, // avoids content touching scrollbar
-          }}
-        >
-          <Box sx={{ p: 2 }}>
-          <Typography variant="h6">
-            <Button onClick={() => setOpenSideBar((prev) => !prev)}>
-              {openSideBar ? "Collapse": "Display"}
-            </Button>
-
-          </Typography>
-        </Box>
-        <Divider />
-        <TextField
-          label="Search title"
-          variant="outlined"
-          sx={{
-          "& legend": { width: 0 }
-          
-          }}
-          InputLabelProps={{
-              shrink: true,
-            }}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-
-        <Typography variant="h6" sx={{ mt: 2 }}>
-          Genres
-        </Typography>
+  <Divider />
 
 
-        <Box
-          sx={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 1,
-            }}
-        >
-          {allGenres.map((g) => {
-            const selected = selectedGenres.includes(g);
+  <Box
+    sx={{
+      flex: 1,
+      overflowY: "auto",
+      px: 2,
+      pb: 2,
+    }}
+  >
+    {/* Search */}
+    <TextField
+      fullWidth
+      label="Search title"
+      onChange={(e) => setSearch(e.target.value)}
+    />
 
-            return (
-              <Chip
-                key={g}
-                label={g}
-                clickable
-                color={selected ? "primary" : "default"}
-                variant={selected ? "filled" : "outlined"}
-                onClick={() => toggleGenre(g)}
-                sx={{
-                  borderRadius: "16px",
-                  fontWeight: 500,
-                }}
-              />
-            );
-          })}
-        </Box>
-        <Typography variant="h6" sx={{ mt: 2 }}>
-          Original Languages
-        </Typography>
-        <LanguageSelector
-          value={language}
-          onChange={setLanguage}
-        />
-      <Box>
-        
-        <Typography>
-          Movie rate: {stars} stars
-        </Typography>
-        <Rating
-          value={stars}
-          precision={0.5}
-          onChange={(_, s) => {console.log("nb stars", s); return setStars(s)}}
-        />
-        
-      </Box>
-      </Box>
-      </Drawer>
+    {/* Genres */}
+    <Typography variant="h6" sx={{ mt: 2 }}>
+      Genres
+    </Typography>
+
+    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+      {Array.isArray(allGenres) &&
+        allGenres.map((g) => {
+          const selected = selectedGenres.includes(g);
+
+          return (
+            <Chip
+              key={g}
+              label={g}
+              clickable
+              color={selected ? "primary" : "default"}
+              variant={selected ? "filled" : "outlined"}
+              onClick={() => toggleGenre(g)}
+            />
+          );
+        })}
+    </Box>
+
+    {/* Language */}
+    <Typography variant="h6" sx={{ mt: 2 }}>
+      Original Languages
+    </Typography>
+
+    <LanguageSelector value={language} onChange={setLanguage} />
+
+    {/* Rating */}
+    <Box sx={{ mt: 2 }}>
+      <Typography>Movie rate: {stars} stars</Typography>
+
+      <Rating
+        value={stars}
+        precision={0.5}
+        onChange={(_, s) => setStars(s)}
+      />
+    </Box>
+
+    {/* Year range */}
+    <Box sx={{ mt: 2 }}>
+      <Typography gutterBottom>Release Years</Typography>
+
+      <Slider
+        value={yearRange}
+        min={minDate}
+        max={new Date().getFullYear()}
+        step={1}
+        valueLabelDisplay="auto"
+        disableSwap
+        onChange={(_, value) => setYearRange(value)}
+      />
+    </Box>
+  </Box>
+</Drawer>
 
       
  
@@ -379,8 +381,8 @@ export default function App() {
     </Box>
     {/* Movies */}
     <Stack spacing={2} sx={{ mb: 3 }}>
-      {pageMovies.map((movie, i) => (
-        <MovieCard key={i} movie={movie} />
+      {(pageMovies ?? []).map((movie, i) => (
+        <MovieCard key={movie.id ?? i} movie={movie} />
       ))}
     </Stack>
 
