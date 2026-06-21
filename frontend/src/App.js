@@ -20,13 +20,14 @@ import {
 import MenuOpenIcon from "@mui/icons-material/MenuOpen";
 import Tooltip from "@mui/material/Tooltip";
 import MenuIcon from "@mui/icons-material/Menu";
-import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
-import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+
 import axios from 'axios';
 import qs from 'qs';
+import { Link, } from "react-router-dom";
 //import moviesData from "./movies.json";
 import MovieCard from "./MovieCard";
 import LanguageSelector from "./LanguageSelector";
+
 
 const moviesData = [
   {
@@ -132,16 +133,8 @@ export default function App() {
 
   const filtered = useMemo(() => {
     let data = [...movies];
-
-    console.log(movies[0]);
-    console.log(
-  "search:",
-  search,
-  "first title:",
-  movies[0]?.Title
-);
     
-    return data; //.sort((a, b) => b.Popularity - a.Popularity);
+    return data; 
   }, [movies, search, selectedGenres]);
 
   const totalPages = Math.max(1, Math.ceil(totalMovies / PAGE_SIZE));
@@ -159,7 +152,7 @@ export default function App() {
       //e.preventDefault();
       
       try {
-        console.log("debug lang", stars)
+
         const request = await axios.get('/allmovies',  {
           
           params: {"start": start,
@@ -216,10 +209,20 @@ export default function App() {
 // }, [search]);
   return (
     <Box sx={{ display: "flex" }}>
+
+
       {/* Top bar */}
       <AppBar position="fixed">
         <Toolbar>
-          <Typography variant="h6">🎬 Movie Explorer</Typography>
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>
+            🎬 Movie Explorer
+          </Typography>
+          <Button color="inherit" component={Link} to="/">
+            <strong>Movie</strong>
+          </Button>
+          <Button color="inherit" component={Link} to="/statistics">
+            <strong>Movies Statistics</strong>
+          </Button>
         </Toolbar>
       </AppBar>
 
@@ -327,7 +330,7 @@ export default function App() {
 
     {/* Year range */}
     <Box sx={{ mt: 2 }}>
-      <Tooltip title="Filter using stars (1 star = 2 score points)"
+      <Tooltip title="Year of release"
         placement="right"
       > 
         <Typography gutterBottom><strong>Release Years</strong></Typography>
@@ -371,7 +374,7 @@ export default function App() {
       <Typography variant="body2" color="text.secondary">
         <strong>{totalMovies}</strong> movies found · showing{" "}
         <strong>
-          {start + 1}–{Math.min(start + PAGE_SIZE, filtered.length)}
+          {start + 1}:{Math.min(start + PAGE_SIZE, filtered.length)}
         </strong>
       </Typography>
     </Box>
@@ -431,5 +434,6 @@ export default function App() {
   </Box>
 </Box>
     </Box>
+    
   );
 }

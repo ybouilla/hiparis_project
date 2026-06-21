@@ -5,7 +5,6 @@
   { "code": "de", "label": "Deutsch", "country": "DE" },
   { "code": "it", "label": "Italiano", "country": "IT" },
   { "code": "pt", "label": "Português", "country": "PT" },
-  { "code": "pt-BR", "label": "Português (BR)", "country": "BR" },
   { "code": "nl", "label": "Nederlands", "country": "NL" },
   { "code": "sv", "label": "Svenska", "country": "SE" },
   { "code": "no", "label": "Norsk", "country": "NO" },
