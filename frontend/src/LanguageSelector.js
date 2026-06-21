@@ -3,7 +3,13 @@ import { FormControl, InputLabel, Select, MenuItem, Box } from "@mui/material";
 import Flag from "react-world-flags";
 import languages from "./languages.json";
 
-const LANGUAGES = languages;
+
+
+const LANGUAGES = [{
+    code: "",
+    label: "No language",
+    country: "",
+  }, ...languages];  // update with a "no language" state
 
 export default function LanguageSelector({ value, onChange }) {
   return (
@@ -18,7 +24,9 @@ export default function LanguageSelector({ value, onChange }) {
         {LANGUAGES.map((lang) => (
           <MenuItem key={lang.code} value={lang.code}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-              <Flag code={lang.country} style={{ width: 20, height: 14 }} />
+              {lang.country && (
+                <Flag code={lang.country} style={{ width: 20, height: 14 }} />
+              )}
               <span>{lang.label}</span>
             </Box>
           </MenuItem>

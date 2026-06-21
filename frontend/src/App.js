@@ -11,7 +11,11 @@ import {
   Button,
   Stack,
   Chip,
+  Rating,
+  Paper,
+  Divider,
 } from "@mui/material";
+
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import axios from 'axios';
@@ -70,6 +74,7 @@ export default function App() {
   const [movies, setMovies] = useState([] ); //{"message": "ok", "movies":""});
   const [totalMovies, setTotalMovies] = useState(PAGE_SIZE);
   const [openSideBar, setOpenSideBar] = useState(true);
+  const [stars, setStars] = useState(0);
  
   const genres = useMemo(() => {
     const set = new Set();
@@ -156,14 +161,16 @@ export default function App() {
       //e.preventDefault();
       
       try {
-        console.log("debug lang", language)
+        console.log("debug lang", stars)
         const request = await axios.get('/allmovies',  {
           
           params: {"start": start,
-                   "end": Math.min(start + PAGE_SIZE, totalMovies),
+                   "end": start + PAGE_SIZE,
                    "title": search,
                   "genre": selectedGenres,
-                  "lang": language
+                  "lang": language,
+                  "score": stars*2,
+                  // TODO: dates
                 },
           headers: {
             // No need to set 'Content-Type', axios will do it for us
@@ -176,6 +183,7 @@ export default function App() {
         setMovies(request.data.movies)
         setTotalMovies(request.data.total_movies);
         setAllGenres(request.data.all_genres);
+        
 
       } catch (error) {
         console.error('Fetching error:', error);
@@ -193,7 +201,7 @@ export default function App() {
       collectMovies();
       console.log("page changed", page);
   console.log("start", (page - 1) * PAGE_SIZE);
-    }, [page, search, selectedGenres, language]);
+    }, [page, search, selectedGenres, language, stars]);
 
   // trigger search for movies
 //   useEffect(() => {
@@ -220,19 +228,36 @@ export default function App() {
           sx={{
             width: openSideBar ? 280 : 72,
             flexShrink: 0,
-            transition: "width 0.3s",
             "& .MuiDrawer-paper": {
               width: openSideBar ? 280 : 72,
-              p: openSideBar ? 2 : 1,
               mt: 8,
+              p: openSideBar ? 2 : 1,
               overflowX: "hidden",
               transition: "width 0.3s",
+
+              // Important
+              height: "calc(100vh - 64px)", // adjust if your AppBar height differs
+              display: "flex",
+              flexDirection: "column",
             },
+         }}
+        >
+          <Box
+          sx={{
+            flex: 1,
+            overflowY: "auto",
+            pr: 1, // avoids content touching scrollbar
           }}
         >
-        <Button onClick={() => setOpenSideBar((prev) => !prev)}>
-          {openSideBar ? "Collapse": "Display"}
-        </Button>
+          <Box sx={{ p: 2 }}>
+          <Typography variant="h6">
+            <Button onClick={() => setOpenSideBar((prev) => !prev)}>
+              {openSideBar ? "Collapse": "Display"}
+            </Button>
+
+          </Typography>
+        </Box>
+        <Divider />
         <TextField
           label="Search title"
           variant="outlined"
@@ -253,12 +278,10 @@ export default function App() {
 
         <Box
           sx={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 1,
-            maxHeight: "70vh",
-            overflowY: "auto",
-          }}
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 1,
+            }}
         >
           {allGenres.map((g) => {
             const selected = selectedGenres.includes(g);
@@ -286,8 +309,23 @@ export default function App() {
           value={language}
           onChange={setLanguage}
         />
+      <Box>
+        
+        <Typography>
+          Movie rate: {stars} stars
+        </Typography>
+        <Rating
+          value={stars}
+          precision={0.5}
+          onChange={(_, s) => {console.log("nb stars", s); return setStars(s)}}
+        />
+        
+      </Box>
+      </Box>
       </Drawer>
 
+      
+ 
       {/* Main content */}
       
       <Box

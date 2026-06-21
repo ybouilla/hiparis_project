@@ -1,5 +1,6 @@
 # app.py
 
+from math import floor
 import sys
 import tempfile
 from flask import Flask, jsonify, request, redirect
@@ -28,11 +29,13 @@ def serve_movies():
 	df = load_csv()
     
 	n_start = int(request.args.get("start", 0))
-	n_end = int(request.args.get("end",len(df)+1))
+	n_end = min(int(request.args.get("end",len(df)+1)), len(df)+1)
 	title = str(request.args.get("title", ""))
 	genre = request.args.getlist("genre", )
 	language = str(request.args.get("lang", ""))
-	best_rated = ""
+	min_rate = float(request.args.get("score", 0.))
+	date_start = ""
+	date_end = ""
 
 	all_genres = sorted(
 						df["Genre"]
@@ -52,6 +55,11 @@ def serve_movies():
 		df = df[mask]
 	if language:
 		df = df[df["Original_Language"] == language]
+
+	if floor(min_rate):
+		print("debug", min_rate)
+		df = df[df["Vote_Average"] >= min_rate]
+
 	movies = df.iloc[n_start:n_end].to_dict(orient="records")
 	resp = {
 		'message': 'ok',

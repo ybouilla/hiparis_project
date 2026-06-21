@@ -22,7 +22,7 @@ export default function MovieCard({ movie }) {
           <Typography variant="h6">{movie.Title}</Typography>
 
           <Typography variant="body2" color="text.secondary">
-            ⭐ {movie.Vote_Count} | ⭐ {movie.Vote_Average} | 🔥{" "}
+            ⭐ {movie.Vote_Count} | ⭐ {movie.Vote_Average}/10 | 🔥{" "}
             {Math.round(movie.Popularity)} | 📅{" "}
             {new Date(movie.Release_Date)?.toISOString().split("T")[0]} |{" "}
             Language : {movie.Original_Language}

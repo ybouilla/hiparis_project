@@ -1,6 +1,5 @@
 [
   { "code": "en", "label": "English", "country": "GB" },
-  { "code": "en-US", "label": "English (US)", "country": "US" },
   { "code": "fr", "label": "Français", "country": "FR" },
   { "code": "es", "label": "Español", "country": "ES" },
   { "code": "de", "label": "Deutsch", "country": "DE" },
