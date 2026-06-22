@@ -34,10 +34,13 @@ import {
   ListItem,
   ListItemText
 } from "@mui/material";
+import MenuIcon from "@mui/icons-material/Menu";
 import axios from 'axios';
 import qs from 'qs';
 import { Link, } from "react-router-dom";
 import CustomTooltip from "./CustomTooltip";
+import MovieScatterChart from "./MovieScatterChart";
+//import { isRenderableText } from "recharts/types/component/Text";
 
 
 const movies = [
@@ -76,13 +79,60 @@ const movies = [
   }
 ]
 
+// constants
+const miniWidth = 72;
 const drawerWidth = 220;
+
 function MovieGraph() {
   const min_date = 1940;
    const [movies2, setMovies2] = useState([] );
    const [yearRange2, setYearRange2] = useState([1900, 2026]);
-   const [totalMovies2, setTotalMovies2] = useState(500); // 
+   const [totalMovies2, setTotalMovies2] = useState(500); // nb of points displayed for graph
    const [minDate2, setMinDate2] = useState(min_date)
+   const [open, setOpen] = useState(true); //collapse side bar
+   const [points, setPoints] = useState(
+    {
+      Popularity: true,
+      Vote_Count: false,
+      Vote_Average: false
+    }
+  )
+  const isReqNormalized = () => Object.values(points).filter(Boolean).length > 1;
+  const [maxVal, setMaxVal] = useState({
+      Popularity: 1.,
+      Vote_Count: 1.,
+      Vote_Average: 1.})
+
+  // for collapsing/uncollapsing side bar
+  const toggleDrawer = () => setOpen((prev) => !prev);
+  // for filters buttons
+  const togglePointsChart = (key) => {
+  setPoints((prev) => ({
+    ...prev,
+    [key]: !prev[key],
+  }));
+};
+
+// builder method for chart data: normalize values using min-max normalization
+const BuildChartData = (movies2, isReqNormalized, maxVal, label) => {
+  //const maxVal = Math.max(...movies.map(m => m[label]));
+
+  return movies2.map(m => ({
+    x: new Date(m.Release_Date).getTime(),
+    y: isReqNormalized() ? m[label] / maxVal[label] : m[label],
+    title: m.Title,
+    Poster_Url: m.Poster_Url,
+  }));
+};
+const dislayYAxis = (points, isReqNormalized)=> {
+  
+  let res = Object.entries(points)
+  .filter(([k, v]) => v )
+  .map(([k]) => k)
+  .join("+");
+  res = res  + (isReqNormalized()?" (Normalized)":"");
+  return res;
+}
   // const data = movies2.map(m => ({
   //   x: new Date(m.Release_Date).getTime(),
   //   y: m.Popularity,
@@ -94,6 +144,7 @@ function MovieGraph() {
 //   return data.filter((_, i) => i % step === 0);
 // }
   
+  // select values on graph
 
    // Getting movies
   const collectMovies = async (e) => {
@@ -125,19 +176,28 @@ function MovieGraph() {
         //setMinDate(request.data.min_date)
         
         setMinDate2(request.data.min_date)
+        setMaxVal(request.data.max_val)
+
       } catch (error) {
         console.error('Fetching error:', error);
 
       } 
   };
-  const chartData = useMemo(() => {
-    return movies2.map(m => ({
-      x: new Date(m.Release_Date).getTime(),
-      y: m.Popularity,
-      title: m.Title,
-      Poster_Url: m.Poster_Url
-    }));
-  }, [movies2]);
+
+  // data to be displayed
+  // TODO: create a function for parsing all that
+  const chartDataPop = useMemo(() => {
+    return BuildChartData(movies2, isReqNormalized, maxVal, "Popularity")
+  }, [movies2, isReqNormalized, maxVal]);
+
+  const chartDataVoteCount = useMemo(() => {
+    
+    return BuildChartData(movies2, isReqNormalized, maxVal, "Vote_Count")
+  }, [movies2, isReqNormalized, maxVal]);
+  
+  const chartDataVoteAvg = useMemo(() => {
+    return BuildChartData(movies2, isReqNormalized, maxVal, "Vote_Average")
+  }, [movies2, isReqNormalized, maxVal]);
   
   // trigger collectMovie
     useEffect(() => {
@@ -148,9 +208,19 @@ function MovieGraph() {
 
   return (
     <Box sx={{ display: "flex" }}>
-    {/* Top bar */}
-      <AppBar position="fixed">
+
+      <AppBar
+        position="fixed"
+        sx={{
+          zIndex: (theme) => theme.zIndex.drawer + 1, // ensures it's above drawer
+        }}
+      >
         <Toolbar>
+
+          <IconButton color="inherit" onClick={toggleDrawer}>
+            <MenuIcon /> 
+          </IconButton>
+
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             🎬 Movie Explorer
           </Typography>
@@ -163,48 +233,79 @@ function MovieGraph() {
         </Toolbar>
       </AppBar>
 
-    {/**side bar */}
-    <Drawer
-      variant="permanent"
-      sx={{
-        width: drawerWidth,
-        flexShrink: 0,
-        "& .MuiDrawer-paper": {
-          width: drawerWidth,
-          boxSizing: "border-box",
-        },
-      }}
-    >
-      
-      <ListItem disablePadding>
-        <Typography variant="h6" sx={{ flexGrow: 1 }}>
+      {/*  Side Drawer */}
+      <Drawer
+        variant="permanent"
+        sx={{
+          width: open ? drawerWidth : miniWidth,
+          flexShrink: 0,
+          whiteSpace: "nowrap",
+          "& .MuiDrawer-paper": {
+            width: open ? drawerWidth : miniWidth,
+            overflowX: "hidden",
+            transition: (theme) =>
+              theme.transitions.create("width", {
+                easing: theme.transitions.easing.sharp,
+                duration: theme.transitions.duration.standard,
+              }),
+            boxSizing: "border-box",
+          },
+        }}
+      >
+
+        <Toolbar />
+
+        {/* Drawer content */}
+        <Box sx={{ p: 2 }}>
+          <Typography variant="h6" gutterBottom>
             🎬 Filters
           </Typography>
-      </ListItem>
-      <ListItem disablePadding>
-        <ListItemButton>
+          <ListItem disablePadding>
+        <ListItemButton sx ={{ "&.Mui-selected": {
+                backgroundColor: "#0664a2",
+              }}}
+          selected={points.Popularity === true}
+          onClick={() => {togglePointsChart("Popularity")}}
+          >
           <ListItemText primary="🔥 Display popularity" />
         </ListItemButton>
       </ListItem>
 
       <ListItem disablePadding>
-        <ListItemButton>
+        <ListItemButton
+        sx ={{ "&.Mui-selected": {
+                backgroundColor: "#0664a2",
+              }}}
+          selected={points.Vote_Count === true}
+          onClick={() => {togglePointsChart("Vote_Count")}}>
           <ListItemText primary="⭐ Display vote_count" />
         </ListItemButton>
       </ListItem>
       <ListItem disablePadding>
-        <ListItemButton>
+        <ListItemButton
+        sx ={{ "&.Mui-selected": {
+                backgroundColor: "#0664a2",
+              }}}
+        selected={points.Vote_Average === true}
+        onClick={() => {togglePointsChart("Vote_Average")}}>
           <ListItemText primary="⭐ Display vote_average" />
         </ListItemButton>
       </ListItem>
       {/* Year range */}
+      
+        
       <Box sx={{ mt: 3,
         px: 3,        // horizontal padding
         width: "100%",
         boxSizing: "border-box",
       }}>
-        
+          <Box>
           <Typography gutterBottom><strong>Release Years</strong></Typography>
+          <Typography variant="caption" color="text.secondary">
+            Filter movies by release year<br/>
+            range
+          </Typography>
+          </Box>
           <Slider
             value={yearRange2}
             min={minDate2}
@@ -214,74 +315,62 @@ function MovieGraph() {
             
             onChange={(_, value) => setYearRange2(value)}
           />
-        
+       
       </Box>
-    </Drawer>
-    <Card
-      sx={{
-        width: "100%",
-        height: "calc(100vh - 120px)", 
-        borderRadius: 3,
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <CardContent>
-        <CardContent>
-        <Typography variant="h6">
-          🎬 Movie Popularity Over Time
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Relationship between release date and popularity score
-        </Typography>
-      </CardContent>
-        <Typography variant="h6" sx={{ mb: 2 }}>
-          🎯 Popularity vs Release Date
-        </Typography>
+
+          
+          
+        </Box>
+      </Drawer>
+
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          p: 3,
+        }}
+      >
+
+        <Toolbar />
+        <Card
+          sx={{
+            borderRadius: 3,
+            height: "calc(100vh - 100px)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <CardContent>
+            <Typography variant="h6">
+              🎬 Movie Popularity Over Time
+            </Typography>
+
+            <div style={{ width: "100%", height: 450 }}>
 
         <div style={{ width: "100%", height: 450 }}>
-          <ResponsiveContainer>
-            <ScatterChart  margin={{ top: 20, right: 20, bottom: 60, left: 40 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+          <ResponsiveContainer width="100%" height={400}>
+            <ScatterChart  margin={{ top: 20, right: 20, bottom: 60, left: 40 }}
+            key={`${points.Popularity}-${points.Vote_Count}-${points.Vote_Average}`}
+            >
+              {/**scatterchart key arrg is here to remove any cache, so chart is dynamic */}
+            {points.Popularity && <MovieScatterChart chartData={chartDataPop}
+            color={"#e9310c"} yLabel={dislayYAxis(points, isReqNormalized)}/> }
 
-              <XAxis
-                dataKey="x"
-                type="number"
-                domain={['dataMin', 'dataMax']}
-                tickFormatter={(v) => new Date(v).getFullYear()}
-              >
-                <Label
-                  value="Release Year"
-                  position="bottom"
-                  offset={20}
-                />
-            </XAxis>
+            {points.Vote_Count && <MovieScatterChart chartData={chartDataVoteCount}
+            color={"#cdd70f"} yLabel={dislayYAxis(points, isReqNormalized)}/>}
 
-            <YAxis dataKey="y" type="number">
-              <Label
-                value="Popularity Score"
-                angle={-90}
-                position="insideLeft"
-              />
-            </YAxis>
-
-              <Tooltip
-                // contentStyle={{
-                //   backgroundColor: "#0f172a",
-                //   border: "1px solid #334155",
-                // }}
-                content={<CustomTooltip />} 
-              />
-
-              <Scatter data={chartData} fill="#38bdf8" />
+            {points.Vote_Average && <MovieScatterChart chartData={chartDataVoteAvg}
+            color={"#0f37d7"} yLabel={dislayYAxis(points, isReqNormalized)}/>}
             </ScatterChart>
           </ResponsiveContainer>
         </div>
-      </CardContent>
-    </Card>
-   
+            </div>
+          </CardContent>
+        </Card>
+      </Box>
     </Box>
   );
+
 }
 
 export default MovieGraph;

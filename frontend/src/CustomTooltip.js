@@ -8,7 +8,7 @@
   } from "@mui/material";
   
   
-  export default function CustomTooltip({ active, payload }) {
+  export default function CustomTooltip({ active, payload}) {
   if (!active || !payload || !payload.length) return null;
 
   const data = payload[0].payload;

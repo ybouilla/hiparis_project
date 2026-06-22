@@ -88,8 +88,13 @@ def serve_movies():
 		'total_movies': total_movies,
 		'all_genres': list(all_genres),
 		'min_date': min_date,
+		'max_val': {
+			   "Popularity": int(df["Popularity"].max(),),
+			  "Vote_Count": int(df["Vote_Count"].max()),
+			  "Vote_Average": float(df["Vote_Average"].max())
+			  }
 	}
-	
+
 	return jsonify(resp), 201
 	resp = {
 		'message': 'bad file format'
