@@ -22,7 +22,12 @@ app.static_folder = app.config.get('FRONTEND_PATH', BUILD_DIR)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
-
+SORTED_VALUES_AVAIL = {
+	"popularity":"Popularity",
+	"release_date": "Release_Date",
+	"vote_count":  "Vote_Count",
+	"vote_average": "Vote_Average"
+}
 
 @app.route('/allmovies', methods=['GET'])
 def serve_movies():
@@ -35,7 +40,10 @@ def serve_movies():
 	language = str(request.args.get("lang", ""))
 	min_rate = float(request.args.get("score", 0.))
 	dates = request.args.getlist("dates", )
+	order_by = request.args.get("order_by")
+	order_desc = request.args.get("order_desc", "asc") # boolean
 
+	
 	all_genres = sorted(
 						df["Genre"]
 						.dropna()
@@ -63,13 +71,21 @@ def serve_movies():
 		if dates[0] == dates[1]:
 			dates[1] = 1 + int(dates[1])
 		df = df[(df["Release_Date"].dt.year >= int(dates[0])) & (df["Release_Date"].dt.year < int(dates[1]))]
+	
+	total_movies = len(df)
+	# from here; size of df is not changing
 
-	movies = df.iloc[n_start:n_end].to_dict(orient="records")
-
+	if order_by is not None:
+		if order_by not in SORTED_VALUES_AVAIL.keys():
+				print("unknown key ", order_by)
+		else:
+			df = df.sort_values(SORTED_VALUES_AVAIL[order_by], ascending=order_desc=="asc")
+	df = df.iloc[n_start:n_end]
+	movies = df.to_dict(orient="records")
 	resp = {
 		'message': 'ok',
 		'movies': movies,
-		'total_movies': len(df),
+		'total_movies': total_movies,
 		'all_genres': list(all_genres),
 		'min_date': min_date,
 	}

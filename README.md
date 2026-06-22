@@ -24,3 +24,6 @@ Possible improvements:
 
 - using sql database and grafana (more production oriented)
 - for frontend (using react.js )
+
+frontend: 
+- search also content in text.

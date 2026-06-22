@@ -26,7 +26,8 @@ import qs from 'qs';
 import { Link, } from "react-router-dom";
 //import moviesData from "./movies.json";
 import MovieCard from "./MovieCard";
-import LanguageSelector from "./LanguageSelector";
+import FilterPanel from "./FilterPanel";
+import SortPanel from "./SortPanel";
 
 
 const moviesData = [
@@ -82,8 +83,9 @@ export default function App() {
   const [stars, setStars] = useState(0);  // for rating
   const [yearRange, setYearRange] = useState([1900, 2026]);
   const [minDate, setMinDate] = useState(min_dates)
- 
-
+  const [filterPanel, setFilterPanel] = useState(true);
+  const [sortBy, setSortBy] = React.useState("");
+  const [sortingDirection, setSortingDirection] = React.useState("desc");
 
   
   const genres = useMemo(() => {
@@ -162,7 +164,8 @@ export default function App() {
                   "lang": language,
                   "score": stars*2,
                   "dates": yearRange,
-                  // TODO: dates
+                  "order_by": sortBy,
+                  "order_desc": sortingDirection,
                 },
           headers: {
             // No need to set 'Content-Type', axios will do it for us
@@ -195,18 +198,15 @@ export default function App() {
 
       collectMovies();
 
-    }, [page, search, selectedGenres, language, stars, yearRange]);
-
-  // trigger search for movies
-//   useEffect(() => {
-//   if (!search) return;
-
-//   const timer = setTimeout(() => {
-//     searchMovies();
-//   }, 300);
-
-//   return () => clearTimeout(timer);
-// }, [search]);
+    }, [page, search, selectedGenres, language, stars, yearRange, sortBy, sortingDirection]);
+  
+  //display vars
+  const sidebarRowSx = {
+    display: "flex",
+    gap: 1,
+    justifyContent: "center",
+    px: 1, // IMPORTANT: match header padding
+  };
   return (
     <Box sx={{ display: "flex" }}>
 
@@ -228,23 +228,23 @@ export default function App() {
 
       {/* Sidebar */}
       <Drawer
-  variant="permanent"
-  sx={{
-    width: openSideBar ? 280 : 72,
-    flexShrink: 0,
-    "& .MuiDrawer-paper": {
-      width: openSideBar ? 280 : 72,
-      mt: 8,
-      height: "calc(100vh - 64px)",
-      display: "flex",
-      flexDirection: "column",
-      overflow: "hidden",
-      transition: "width 0.3s",
-    },
-  }}
->
- 
-  <Box sx={{ p: 2 }}>
+        variant="permanent"
+        sx={{
+          width: openSideBar ? 280 : 72,
+          flexShrink: 0,
+          "& .MuiDrawer-paper": {
+            width: openSideBar ? 280 : 72,
+            mt: 8,
+            height: "calc(100vh - 64px)",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden", // keep this
+            transition: "width 0.3s",
+          },
+        }}
+      >
+      
+  <Box sx={{ p: 1, display: "flex",  flexDirection: "column", gap: .5}}>
     <IconButton
       onClick={() => setOpenSideBar((p) => !p)}
       size="small"
@@ -252,101 +252,50 @@ export default function App() {
       {openSideBar ? "COLLAPSE ": ""}
       {openSideBar ? <MenuOpenIcon /> : <MenuIcon />}
   </IconButton>
+    <Box sx={sidebarRowSx}>
+      <Button disabled={filterPanel} variant="outlined" onClick={() => setFilterPanel(true)}>
+        Filters
+      </Button>
+
+      <Button disabled={filterPanel===false} variant="outlined" onClick={() => setFilterPanel(false)}>
+        Sort
+      </Button>
+    </Box>
   </Box>
-
-  <Divider />
-
-
   <Box
     sx={{
-      flex: 1,
-      overflowY: "auto",
-      px: 2,
-      pb: 2,
-    }}
-  >
-    {/* Search */}
-    
-    <TextField
-      fullWidth
-      label="Search title"
-      onChange={(e) => setSearch(e.target.value)}
-    />
-
-    {/* Genres */}
-    <Typography variant="h6" sx={{ mt: 2 }}>
-      Genres
-    </Typography>
-
-    
-    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-      {Array.isArray(allGenres) &&
-        allGenres.map((g) => {
-          const selected = selectedGenres.includes(g);
-          //robustifying
-          return (
-            <Tooltip
-              key={g}
-              title={selected ? "Remove genre " + g : "Add genre " + g}
-              placement="top"
-            >
-              <Chip
-                key={g}
-                label={g}
-                clickable
-                color={selected ? "primary" : "default"}
-                variant={selected ? "filled" : "outlined"}
-                onClick={() => toggleGenre(g)}
-              />
-            </Tooltip>
-          );
-        })}
-    </Box>
-
-    {/* Language */}
-    
-    <Tooltip title="Filter by original language"
-      placement="right"
-    > 
-      <Typography sx={{ mt: 2 }}>
-        <strong>Original Languages</strong>
-      </Typography>
-      <LanguageSelector value={language} onChange={setLanguage} />
-    </Tooltip>
-    {/* Rating */}
-    <Box sx={{ mt: 2 }}>
-      <Tooltip title="Filter using stars (1 star = 2 score points)"
-        placement="right"
-      > 
-      <Typography><strong>Movie rate: {stars} stars </strong></Typography>
+        flex: 1,
+        minHeight: 0,
+        overflowY: "auto",
+        overflowX: "hidden",
+      }}>
+  {filterPanel === true && (
+      <FilterPanel 
+        setSearch={setSearch}
+        toggleGenre={toggleGenre}
+        selectedGenres={selectedGenres}
+        allGenres={allGenres}
+        stars={stars}
+        setStars={setStars}
+        language={language}
+        setLanguage={setLanguage}
+        minDate={minDate}
+        yearRange={yearRange}
+        setYearRange={setYearRange}
       
-      <Rating
-        value={stars}
-        precision={0.5}
-        onChange={(_, s) => setStars(s)}
       />
-      </Tooltip>
+    )}
+    {filterPanel === false && (
+      <SortPanel
+      sortBy={sortBy}
+      setSortBy={setSortBy}
+      direction={sortingDirection}
+      setDirection={setSortingDirection}
+      sidebarRowSx={sidebarRowSx}
+      />
+    )}
     </Box>
-
-    {/* Year range */}
-    <Box sx={{ mt: 2 }}>
-      <Tooltip title="Year of release"
-        placement="right"
-      > 
-        <Typography gutterBottom><strong>Release Years</strong></Typography>
-        <Slider
-          value={yearRange}
-          min={minDate}
-          max={new Date().getFullYear()}
-          step={1}
-          valueLabelDisplay="auto"
-          disableSwap
-          onChange={(_, value) => setYearRange(value)}
-        />
-      </Tooltip>
-    </Box>
-  </Box>
-</Drawer>
+  </Drawer>
 
       
  
