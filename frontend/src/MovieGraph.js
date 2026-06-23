@@ -42,7 +42,7 @@ import CustomTooltip from "./CustomTooltip";
 import MovieScatterChart from "./MovieScatterChart";
 //import { isRenderableText } from "recharts/types/component/Text";
 
-
+// for testing
 const movies = [
   {
     "Release_Date": "2021-12-15",
@@ -84,6 +84,7 @@ const miniWidth = 72;
 const drawerWidth = 220;
 
 function MovieGraph() {
+
   const min_date = 1940;
    const [movies2, setMovies2] = useState([] );
    const [yearRange2, setYearRange2] = useState([1900, 2026]);
@@ -113,7 +114,8 @@ function MovieGraph() {
   }));
 };
 
-// builder method for chart data: normalize values using min-max normalization
+// builder method for chart data: normalize values using min-max normalization,
+// if normalization is required
 const BuildChartData = (movies2, isReqNormalized, maxVal, label) => {
   //const maxVal = Math.max(...movies.map(m => m[label]));
 
@@ -124,6 +126,7 @@ const BuildChartData = (movies2, isReqNormalized, maxVal, label) => {
     Poster_Url: m.Poster_Url,
   }));
 };
+
 const dislayYAxis = (points, isReqNormalized)=> {
   
   let res = Object.entries(points)
@@ -133,20 +136,9 @@ const dislayYAxis = (points, isReqNormalized)=> {
   res = res  + (isReqNormalized()?" (Normalized)":"");
   return res;
 }
-  // const data = movies2.map(m => ({
-  //   x: new Date(m.Release_Date).getTime(),
-  //   y: m.Popularity,
-  //   title: m.Title,
-  //   Poster_Url: m.Poster_Url
-  // }));
+ 
 
-//   function downsample(data, step = 10) {
-//   return data.filter((_, i) => i % step === 0);
-// }
-  
-  // select values on graph
-
-   // Getting movies
+   // Getting movies from API
   const collectMovies = async (e) => {
       //e.preventDefault();
       try {
@@ -185,7 +177,7 @@ const dislayYAxis = (points, isReqNormalized)=> {
   };
 
   // data to be displayed
-  // TODO: create a function for parsing all that
+
   const chartDataPop = useMemo(() => {
     return BuildChartData(movies2, isReqNormalized, maxVal, "Popularity")
   }, [movies2, isReqNormalized, maxVal]);

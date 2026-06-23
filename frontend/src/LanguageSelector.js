@@ -9,7 +9,7 @@ const LANGUAGES = [{
     code: "",
     label: "No language",
     country: "",
-  }, ...languages];  // update with a "no language" state
+  }, ...languages];  // update with a "no language" state (disable language from searching)
 
 export default function LanguageSelector({ value, onChange }) {
   return (

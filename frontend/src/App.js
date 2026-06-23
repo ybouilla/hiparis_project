@@ -75,11 +75,10 @@ export default function App() {
   const [language, setLanguage] = useState("");
   const [allGenres, setAllGenres] = useState([]);
   const [search, setSearch] = useState("");
-  // const [allGenres, setAllGenres] = useState([]);
+
   const [selectedGenres, setSelectedGenres] = useState([]);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState([]);
-  //const [movies, setMovies] = useState([] );
   const [totalMovies, setTotalMovies] = useState(PAGE_SIZE);
   const [openSideBar, setOpenSideBar] = useState(true);
   const [stars, setStars] = useState(0);  // for rating
@@ -129,9 +128,12 @@ export default function App() {
     );
   };
 
+const filtered = useMemo(() => {
+    let data = [...movies];
+    return data; 
+  }, [movies, search, selectedGenres]);
 
-
-     // Getting movies
+     // Getting movies (API GET REQUEST)
   const collectMovies = async (pageNumber, signal) => {
       //e.preventDefault();
       const start = (pageNumber - 1) * PAGE_SIZE;
@@ -176,6 +178,11 @@ export default function App() {
       }
   };
 
+  /**
+   * Fetch and store a movie page.
+   * Prevents duplicate pages, updates loading state,
+   * and disables further pagination when no results remain.
+   */
   const loadPage = useCallback( async (pageNumber, signal) => {
     
     setIsLoadingPage(true);
@@ -205,11 +212,7 @@ export default function App() {
     }
 }, [collectMovies]);
 
-  const filtered = useMemo(() => {
-    let data = [...movies];
-    
-    return data; 
-  }, [movies, search, selectedGenres]);
+  
 
   const totalPages = Math.max(1, Math.ceil(totalMovies / PAGE_SIZE));
 
@@ -218,15 +221,17 @@ export default function App() {
 
 
 
-// trigger collectMovie
-// scroll down
-
-
+// scroll down method
+/**
+ * Infinite scroll (down).
+ * Loads the next page when the bottom sentinel enters the viewport.
+ * Includes guards to prevent duplicate or concurrent requests.
+ */
 useEffect(() => {
   const observer = new IntersectionObserver(
     (entries) => {
       const entry = entries[0];
-
+      // safeguards
       if (!entry.isIntersecting) return;
       if (!hasMoreRef.current) return;
       if (isLoadingPageRef.current) return;
@@ -260,10 +265,15 @@ useEffect(() => {
 }, [pages, loadPage]);
 
 // scroll up
+/**
+ * Infinite scroll (up).
+ * Loads the previous page when the top sentinel enters the viewport.
+ * Prevents requests when already at the first page.
+ */
 useEffect(() => {
   const observer = new IntersectionObserver((entries) => {
     const entry = entries[0];
-
+    //safeguards
     if (!entry.isIntersecting) return;
     if (!hasMoreRef.current) return;
     if (isLoadingPageRef.current) return;
@@ -289,6 +299,10 @@ useEffect(() => {
   return () => observer.disconnect();
 }, [pages, loadPage]);
 
+/**
+ * Reload movies when filters or sorting options change.
+ * Cancels any pending requests and resets pagination.
+ */
   useEffect(() => {
       const controller = new AbortController();
       controllerRef.current = controller;
@@ -301,10 +315,19 @@ useEffect(() => {
       };
     }, [debouncedSearch,search, selectedGenres, language, stars, yearRange, sortBy, sortingDirection]);
   
+/**
+ * Keep hasMoreRef synchronized with the latest hasMore state
+ * for access inside callbacks and observers.
+ */
   useEffect(() => {
     hasMoreRef.current = hasMore;
   }, [hasMore]);
 
+/**
+ * Debounce search input to reduce API requests while typing.
+ * Updates debouncedSearch 300ms after the last keystroke.
+ * when doing searches from title movie
+ */
   useEffect(() => {
     const t = setTimeout(() => {
       setDebouncedSearch(search);
@@ -318,7 +341,7 @@ useEffect(() => {
     display: "flex",
     gap: 1,
     justifyContent: "center",
-    px: 1, // IMPORTANT: match header padding
+    px: 1, 
   };
   return (
     <Box sx={{ display: "flex" }}>

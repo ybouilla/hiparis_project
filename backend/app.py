@@ -11,7 +11,7 @@ import pandas as pd
 from backend.load_csv import load_csv
 
 
-MOVIES_FILE = './movies.csv'
+
 
 BUILD_DIR = os.path.join('..', 'frontend', 'build')
 app = Flask(__name__, static_folder=BUILD_DIR, static_url_path='/')
@@ -19,7 +19,6 @@ CORS(app)
 
 app.config.from_prefixed_env()
 app.static_folder = app.config.get('FRONTEND_PATH', BUILD_DIR)
-app.config['MOVIES_FILE'] = MOVIES_FILE
 
 
 SORTED_VALUES_AVAIL = {
@@ -31,6 +30,24 @@ SORTED_VALUES_AVAIL = {
 
 @app.route('/allmovies', methods=['GET'])
 def serve_movies():
+	"""
+    Return a paginated list of movies with optional filtering and sorting.
+
+    Query parameters:
+        start (int): Pagination start index.
+        end (int): Pagination end index.
+        title (str): Case-insensitive title search.
+        genre (list[str]): One or more genres to match.
+        lang (str): Original language code.
+        score (float): Minimum vote average.
+        dates (list[int]): Release year range [start, end).
+        order_by (str): Sort field.
+        order_desc (str): Sort direction ('asc' or 'desc').
+
+    Returns:
+        JSON response containing matching movies, total count,
+        available genres, dataset minimum year, and metric maxima.
+    """
 	df = load_csv()
 	min_date = df["Release_Date"].min().year
 	n_start = int(request.args.get("start", 0))
@@ -111,20 +128,7 @@ def serve_movies():
 	}
 	return jsonify(resp), 422
 
-@app.route("/movies", methods=["GET"])
-def search_movies():
-	df = load_csv()
-	
-	n_start = int(request.args.get("start", 0))
-	n_end = int(request.args.get("end",len(df)+1))
-	#df = pd.DataFrame(movies)
-	title = request.args.get("title", "")
-	results = [
-        movie.to_dict() for i, movie in df.iterrows()
-        if title.lower() in movie["Title"].lower()
-    ]
 
-	return jsonify({"movies": results[n_start:n_end]})
 
 @app.route('/')
 def index():

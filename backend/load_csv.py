@@ -5,10 +5,10 @@ from typing import List
 
 import pandas as pd
 
-
+MOVIE_FILE = "movies.csv" if os.path.exists("./movies.csv") else os.path.join("backend","movies.csv")
 
 def _clean_row(row: List[str], cleaned: List[str],):
-    
+    """Parses line when '\n' is found in the csv"""
     if len(row) == 1:
          
         cleaned[-1] += row[0]
@@ -19,6 +19,7 @@ def _clean_row(row: List[str], cleaned: List[str],):
 
 
 def test_buffer():
+    """for tests"""
     data = [['2013-10-20', 'Pixie Hollow Bake Off', "Tink challenges Gelata to see who can bake the best cake for the queen's party.  Plus 10 Disney Fairies Mini-Shorts:"],
             ['- Just Desserts'],
  ['- If The Hue Fits'],
@@ -43,13 +44,14 @@ def test_buffer():
 
 @functools.cache
 def load_csv():
-
+    """Loads csv """
 
     data = []
     cleaned = []
     is_buffering = False
     file_path = "./movies.csv" if os.path.exists("./movies.csv") else os.path.join("backend","movies.csv")
     len_row: int = 0
+    file_path = MOVIE_FILE
     with open(file_path, "r", encoding="utf-8", errors="replace") as f:
         # Read raw lines first (gives more control over broken rows)
         lines = f.readlines()
