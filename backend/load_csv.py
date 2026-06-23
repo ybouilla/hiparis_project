@@ -5,38 +5,7 @@ from typing import List
 
 import pandas as pd
 
-def load_data():
-    # change path here
-    df = pd.read_csv("movies.csv",
-                     engine="python",
-                     header=0,
-                     sep=",",
-                     encoding="utf-8",
-                    
-    )
-    # convert values to correct datatype
-    df["Popularity"] = pd.to_numeric(df["Popularity"], errors="coerce")
-    df["Vote_Count"] = pd.to_numeric(df["Vote_Count"], errors="coerce").astype("Int64")
-    df["Vote_Average"] = pd.to_numeric(df["Vote_Average"], errors="coerce")
 
-    # store Genres in a list (eg "Action, Crime, Thriller" -> ["Action", "Crime", "Thriller"])
-    df["Genre_List"] = df["Genre"].apply(lambda x: [g.strip() for g in str(x).split(",")])
-
-    # convert here days into python's datetime
-    df["Release_Date"] = pd.to_datetime(
-        df["Release_Date"],
-        dayfirst=True,
-        errors="coerce"
-    ) 
-
-
-    return df
-
-def flush_buffer(buf):
-    if not buf.strip():
-        return None
-    # parse CSV safely from reconstructed line
-    return next(csv.reader([buf], skipinitialspace=True))
 
 def _clean_row(row: List[str], cleaned: List[str],):
     

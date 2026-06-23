@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import './index.css';
 import App from './App';
 import MovieGraph from "./MovieGraph";
+import NotFound from './NotFound';
 
 import reportWebVitals from './reportWebVitals';
 
@@ -17,6 +18,7 @@ root.render(
       <Routes>
                 <Route path="/" element={<App />}/>
                 <Route path="/statistics" element={<MovieGraph  />} />
+                <Route path="*" element={<NotFound />} />
         </Routes>
       
     </BrowserRouter>
