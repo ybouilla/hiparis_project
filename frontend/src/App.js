@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import {
   Box,
   AppBar,
@@ -66,6 +66,7 @@ const moviesData = [
   }
 ]
 const PAGE_SIZE = 20;
+const WINDOW_SIZE = 3;
 const min_dates = 1900;
 export default function App() {
   const df = moviesData;
@@ -77,6 +78,7 @@ export default function App() {
   // const [allGenres, setAllGenres] = useState([]);
   const [selectedGenres, setSelectedGenres] = useState([]);
   const [page, setPage] = useState(1);
+  const [pages, setPages] = useState([]);
   const [movies, setMovies] = useState([] );
   const [totalMovies, setTotalMovies] = useState(PAGE_SIZE);
   const [openSideBar, setOpenSideBar] = useState(true);
@@ -86,15 +88,24 @@ export default function App() {
   const [filterPanel, setFilterPanel] = useState(true);
   const [sortBy, setSortBy] = React.useState("");
   const [sortingDirection, setSortingDirection] = React.useState("desc");
+  const [isLoadingPage, setIsLoadingPage] = useState(false); // loadingGuard
+  const [hasMore, setHasMore] = useState(true);  // stop guard
 
-  
+
+  // use ref definitions
+  const topRef = useRef(null);
+  const loadMoreRef = useRef(null);
+  const isLoadingPageRef = useRef(false);
+  const hasMoreRef = useRef(true);
+
+  // memoization
   const genres = useMemo(() => {
     const set = new Set();
     console.log("movies =", movies);
     console.log("lang memo", language)
     console.log("is array?", Array.isArray(movies));
   
-    if (!Array.isArray(movies) || movies.length === 0 || movies) return [];
+    if (!Array.isArray(movies) || movies.length === 0 ) return [];
     movies.forEach((m) => {
       m.Genre?.split(",").forEach((g) => set.add(g.trim()));
     });
@@ -133,28 +144,12 @@ export default function App() {
       }
   };
 
-  const filtered = useMemo(() => {
-    let data = [...movies];
-    
-    return data; 
-  }, [movies, search, selectedGenres]);
-
-  const totalPages = Math.max(1, Math.ceil(totalMovies / PAGE_SIZE));
-
-  const start = (page - 1) * PAGE_SIZE;
-  const pageMovies = filtered //.slice(start, start + PAGE_SIZE);
-
-  const goPrev = () => setPage((p) => { return Math.max(1, p - 1);
-  });
-  const goNext = () => setPage((p) => Math.min(totalPages, p + 1)); 
-
-
-   // Getting movies
-  const collectMovies = async (e) => {
+     // Getting movies
+  const collectMovies = async (pageNumber) => {
       //e.preventDefault();
-      
+      const start = (pageNumber - 1) * PAGE_SIZE;
       try {
-
+        
         const request = await axios.get('/allmovies',  {
           
           params: {"start": start,
@@ -183,23 +178,125 @@ export default function App() {
         setTotalMovies(request.data.total_movies);
         setAllGenres(request.data.all_genres);
         setMinDate(request.data.min_date)
-
+        return request.data.movies ?? [];
       } catch (error) {
         console.error('Fetching error:', error);
 
       } finally {
-
+        
       }
   };
-  
 
-  // trigger collectMovie
+  const loadPage = useCallback( async (pageNumber) => {
+    setIsLoadingPage(true);
+    try{
+    const newMovies = await collectMovies(pageNumber);
+
+    if (!newMovies || newMovies.length === 0) {
+      setHasMore(false);
+      return; // IMPORTANT: do NOT add page
+    }
+    setPages((prev) => {
+      const exists = prev.some((p) => p.page === pageNumber);
+      if (exists) return prev;
+
+      const updated = [...prev, { page: pageNumber, movies: newMovies }];
+
+      // keep only window
+
+      if (updated.length > WINDOW_SIZE) {
+        return updated.slice(updated.length - WINDOW_SIZE);
+      }
+
+      return updated;
+    });
+    }finally{
+      setIsLoadingPage(false);
+    }
+}, [collectMovies]);
+  const filtered = useMemo(() => {
+    let data = [...movies];
+    
+    return data; 
+  }, [movies, search, selectedGenres]);
+
+  const totalPages = Math.max(1, Math.ceil(totalMovies / PAGE_SIZE));
+
+  const start = (page - 1) * PAGE_SIZE;
+  const pageMovies = filtered //.slice(start, start + PAGE_SIZE);
+
+  const goPrev = () => setPage((p) => { return Math.max(1, p - 1);
+  });
+  const goNext = () => setPage((p) => Math.min(totalPages, p + 1)); 
+
+
+// trigger collectMovie
+// scroll down
+
+
+useEffect(() => {
+
+  if (!hasMore) return;
+  //if (isLoadingPage) return;
+  const observer = new IntersectionObserver((entries) => {
+    if (!entries[0].isIntersecting) return;
+    if (!hasMore) return;
+    if (isLoadingPageRef.current) return;
+    //if (isLoadingPage) return;
+    if (entries[0].isIntersecting) {
+      const nextPage = pages.length > 0
+        ? pages[pages.length - 1].page + 1
+        : 1;
+
+      loadPage(nextPage);
+    }
+  });
+
+  if (loadMoreRef.current) observer.observe(loadMoreRef.current);
+
+  return () => observer.disconnect();
+}, [pages]);
+
+// scroll up
+
+
+useEffect(() => {
+  const observer = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting) {
+      const firstPage = pages[0]?.page;
+
+      if (firstPage > 1) {
+        loadPage(firstPage - 1);
+      }
+    }
+  });
+
+  if (topRef.current) observer.observe(topRef.current);
+
+  return () => observer.disconnect();
+}, [pages]);
+
   useEffect(() => {
-
-      collectMovies();
-
-    }, [page, search, selectedGenres, language, stars, yearRange, sortBy, sortingDirection]);
+      setPages([]);
+      loadPage(1);
+      
+    }, [search, selectedGenres, language, stars, yearRange, sortBy, sortingDirection]);
   
+  useEffect(() => {
+  hasMoreRef.current = hasMore;
+}, [hasMore]);
+    // trigger collectMovie
+
+  // useEffect(() => {
+
+  //     collectMovies();
+
+  //   }, [page, search, selectedGenres, language, stars, yearRange, sortBy, sortingDirection]);
+  
+
+  // postprocess movies
+
+  const movies2 = pages.flatMap((p) => p.movies);
   //display vars
   const sidebarRowSx = {
     display: "flex",
@@ -327,58 +424,23 @@ export default function App() {
         </strong>
       </Typography>
     </Box>
-
-    {/* Pagination (head of page) */}
-    <Box
-      sx={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        gap: 2,
-        py: 2,
-      }}
-    >
-      <Button onClick={goPrev} disabled={page === 1} variant="outlined">
-        ⬅️ Previous
-      </Button>
-
-      <Typography sx={{ minWidth: 120, textAlign: "center" }}>
-        Page {page} / {totalPages}
-      </Typography>
-
-      <Button onClick={goNext} disabled={page === totalPages} variant="outlined">
-        Next ➡️
-      </Button>
-    </Box>
-    {/* Movies */}
-    <Stack spacing={2} sx={{ mb: 3 }}>
-      {(pageMovies ?? []).map((movie, i) => (
-        <MovieCard key={movie.id ?? i} movie={movie} />
+  
+  {/* Infinite scroll trigger */}
+  <div ref={topRef} style={{ height: 40 }} />
+   <Stack spacing={2} sx={{ mb: 3 }}>
+      {(movies2 ?? []).map((movie2, i) => (
+        <MovieCard key={ i} movie={movie2} />
       ))}
     </Stack>
 
-    {/* Pagination foot of page */}
-    <Box
-      sx={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        gap: 2,
-        py: 2,
-      }}
-    >
-      <Button onClick={goPrev} disabled={page === 1} variant="outlined">
-        ⬅️ Previous
-      </Button>
 
-      <Typography sx={{ minWidth: 120, textAlign: "center" }}>
-        Page {page} / {totalPages}
-      </Typography>
+  {hasMore && movies.length > 0 && (
+    <div ref={loadMoreRef} style={{ height: 40 }} />
+  )}
 
-      <Button onClick={goNext} disabled={page === totalPages} variant="outlined">
-        Next ➡️
-      </Button>
-    </Box>
+{page < totalPages && (
+  <p style={{ textAlign: "center" }}>Loading more...</p>
+)}
 
   </Box>
 </Box>

@@ -82,17 +82,27 @@ def serve_movies():
 			df = df.sort_values(SORTED_VALUES_AVAIL[order_by], ascending=order_desc=="asc")
 	df = df.iloc[n_start:n_end]
 	movies = df.to_dict(orient="records")
+	# compute max (for chart only)
+	popularity_max = df["Popularity"].max()
+	popularity_max = 1 if pd.isna(popularity_max) else popularity_max
+
+	vote_count_max = df["Vote_Count"].max()
+	vote_count_max = 1 if pd.isna(vote_count_max) else vote_count_max
+
+	vote_avg_max = df["Vote_Average"].max()
+	vote_avg_max = 1 if pd.isna(vote_avg_max) else vote_avg_max
+	max_val = {
+			   "Popularity": int(popularity_max),
+			  "Vote_Count": int(vote_count_max),
+			  "Vote_Average": float(vote_avg_max)
+			  }
 	resp = {
 		'message': 'ok',
 		'movies': movies,
 		'total_movies': total_movies,
 		'all_genres': list(all_genres),
 		'min_date': min_date,
-		'max_val': {
-			   "Popularity": int(df["Popularity"].max(),),
-			  "Vote_Count": int(df["Vote_Count"].max()),
-			  "Vote_Average": float(df["Vote_Average"].max())
-			  }
+		'max_val': max_val,
 	}
 
 	return jsonify(resp), 201
