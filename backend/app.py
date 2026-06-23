@@ -11,7 +11,7 @@ import pandas as pd
 from backend.load_csv import load_csv
 
 
-UPLOAD_FOLDER = './movies.csv'
+MOVIES_FILE = './movies.csv'
 
 BUILD_DIR = os.path.join('..', 'frontend', 'build')
 app = Flask(__name__, static_folder=BUILD_DIR, static_url_path='/')
@@ -19,7 +19,7 @@ CORS(app)
 
 app.config.from_prefixed_env()
 app.static_folder = app.config.get('FRONTEND_PATH', BUILD_DIR)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MOVIES_FILE'] = MOVIES_FILE
 
 
 SORTED_VALUES_AVAIL = {

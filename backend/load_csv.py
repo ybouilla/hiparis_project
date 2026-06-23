@@ -1,5 +1,6 @@
 import csv
 import functools
+import os
 from typing import List
 
 import pandas as pd
@@ -78,7 +79,7 @@ def load_csv():
     data = []
     cleaned = []
     is_buffering = False
-    file_path = "movies.csv"
+    file_path = os.path.join("backend","movies.csv")
     len_row: int = 0
     with open(file_path, "r", encoding="utf-8", errors="replace") as f:
         # Read raw lines first (gives more control over broken rows)

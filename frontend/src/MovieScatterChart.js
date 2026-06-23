@@ -72,9 +72,7 @@ export default function MovieScatterChart({chartData, color, yLabel}){
                 <YAxis dataKey="y" type="number">
                   <Label
                     content={labelLines} value={yLabel} 
- 
-                    
-                    
+
                   />
                 </YAxis>
     
