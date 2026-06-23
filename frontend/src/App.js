@@ -66,7 +66,7 @@ const moviesData = [
   }
 ]
 const PAGE_SIZE = 20;
-const WINDOW_SIZE = 3;
+const WINDOW_SIZE = 10;
 const min_dates = 1900;
 export default function App() {
   const df = moviesData;
@@ -79,7 +79,7 @@ export default function App() {
   const [selectedGenres, setSelectedGenres] = useState([]);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState([]);
-  const [movies, setMovies] = useState([] );
+  //const [movies, setMovies] = useState([] );
   const [totalMovies, setTotalMovies] = useState(PAGE_SIZE);
   const [openSideBar, setOpenSideBar] = useState(true);
   const [stars, setStars] = useState(0);  // for rating
@@ -90,6 +90,7 @@ export default function App() {
   const [sortingDirection, setSortingDirection] = React.useState("desc");
   const [isLoadingPage, setIsLoadingPage] = useState(false); // loadingGuard
   const [hasMore, setHasMore] = useState(true);  // stop guard
+  const [debouncedSearch, setDebouncedSearch] = useState(search); // avoid spamming search
 
 
   // use ref definitions
@@ -97,8 +98,15 @@ export default function App() {
   const loadMoreRef = useRef(null);
   const isLoadingPageRef = useRef(false);
   const hasMoreRef = useRef(true);
+  const lastLoadedPageRef = useRef(1);
+  const controllerRef = useRef(null);
+  const observerCooldownRef = useRef(false);
+  const containerRef = useRef(null);
 
   // memoization
+  const movies = useMemo(() =>
+  pages.flatMap(p => p.movies),
+[pages]);
   const genres = useMemo(() => {
     const set = new Set();
     console.log("movies =", movies);
@@ -120,32 +128,11 @@ export default function App() {
         : [...prev, genre]
     );
   };
-  // searching for movies
-  const searchMovies = async (e) => {
-      //e.preventDefault();
-      
-      try {
-        
-        const request = await axios.get('/movies',  {
-          
-          params: {"title": search.toLowerCase(), "start": start, "end": Math.min(start + PAGE_SIZE, totalMovies)},
-          headers: {
-            // No need to set 'Content-Type', axios will do it for us
-          },
-        });
-        console.log('got response', request)
-        setMovies(request.data.movies)
-      } catch (error) {
-        console.error('Fetching error:', error);
-        //setUploadMessage('Error uploading file');
-      } finally {
-        // setUploading(false);
-        // setDateValue(null)
-      }
-  };
+
+
 
      // Getting movies
-  const collectMovies = async (pageNumber) => {
+  const collectMovies = async (pageNumber, signal) => {
       //e.preventDefault();
       const start = (pageNumber - 1) * PAGE_SIZE;
       try {
@@ -165,32 +152,36 @@ export default function App() {
           headers: {
             // No need to set 'Content-Type', axios will do it for us
           },
+          signal,
            paramsSerializer: (params) =>
             qs.stringify(params, { arrayFormat: "repeat" })
         });
         console.log('got response', request)
 
-        setMovies(Array.isArray(request.data.movies)
-                  ? request.data.movies
-                  : Array.isArray(request.data)
-                  ? request.data
-                  : [])
+        // setMovies(Array.isArray(request.data.movies)
+        //           ? request.data.movies
+        //           : Array.isArray(request.data)
+        //           ? request.data
+        //           : [])
         setTotalMovies(request.data.total_movies);
         setAllGenres(request.data.all_genres);
         setMinDate(request.data.min_date)
         return request.data.movies ?? [];
       } catch (error) {
+        if (axios.isCancel(error)) return [];
         console.error('Fetching error:', error);
-
+        return []
       } finally {
         
       }
   };
 
-  const loadPage = useCallback( async (pageNumber) => {
+  const loadPage = useCallback( async (pageNumber, signal) => {
+    
     setIsLoadingPage(true);
+    isLoadingPageRef.current = true;
     try{
-    const newMovies = await collectMovies(pageNumber);
+      const newMovies = await collectMovies(pageNumber);
 
     if (!newMovies || newMovies.length === 0) {
       setHasMore(false);
@@ -201,19 +192,19 @@ export default function App() {
       if (exists) return prev;
 
       const updated = [...prev, { page: pageNumber, movies: newMovies }];
-
+      lastLoadedPageRef.current = pageNumber;
       // keep only window
 
-      if (updated.length > WINDOW_SIZE) {
-        return updated.slice(updated.length - WINDOW_SIZE);
-      }
+
 
       return updated;
     });
     }finally{
       setIsLoadingPage(false);
+      isLoadingPageRef.current = false;
     }
 }, [collectMovies]);
+
   const filtered = useMemo(() => {
     let data = [...movies];
     
@@ -225,9 +216,6 @@ export default function App() {
   const start = (page - 1) * PAGE_SIZE;
   const pageMovies = filtered //.slice(start, start + PAGE_SIZE);
 
-  const goPrev = () => setPage((p) => { return Math.max(1, p - 1);
-  });
-  const goNext = () => setPage((p) => Math.min(totalPages, p + 1)); 
 
 
 // trigger collectMovie
@@ -235,69 +223,97 @@ export default function App() {
 
 
 useEffect(() => {
+  const observer = new IntersectionObserver(
+    (entries) => {
+      const entry = entries[0];
 
-  if (!hasMore) return;
-  //if (isLoadingPage) return;
-  const observer = new IntersectionObserver((entries) => {
-    if (!entries[0].isIntersecting) return;
-    if (!hasMore) return;
-    if (isLoadingPageRef.current) return;
-    //if (isLoadingPage) return;
-    if (entries[0].isIntersecting) {
-      const nextPage = pages.length > 0
-        ? pages[pages.length - 1].page + 1
-        : 1;
+      if (!entry.isIntersecting) return;
+      if (!hasMoreRef.current) return;
+      if (isLoadingPageRef.current) return;
+      if (observerCooldownRef.current) return;
+
+      observerCooldownRef.current = true;
+      isLoadingPageRef.current = true;
+
+      const nextPage =
+        pages.length > 0
+          ? pages[pages.length - 1].page + 1
+          : 1;
 
       loadPage(nextPage);
-    }
-  });
 
-  if (loadMoreRef.current) observer.observe(loadMoreRef.current);
+      setTimeout(() => {
+        observerCooldownRef.current = false;
+      }, 300);
+    },
+    {
+      root: null,
+      rootMargin: "200px",
+      threshold: 0,
+    }
+  );
+
+  const el = loadMoreRef.current;
+  if (el) observer.observe(el);
 
   return () => observer.disconnect();
-}, [pages]);
+}, [pages, loadPage]);
 
 // scroll up
-
-
 useEffect(() => {
   const observer = new IntersectionObserver((entries) => {
-    if (entries[0].isIntersecting) {
-      const firstPage = pages[0]?.page;
+    const entry = entries[0];
 
-      if (firstPage > 1) {
-        loadPage(firstPage - 1);
-      }
-    }
+    if (!entry.isIntersecting) return;
+    if (!hasMoreRef.current) return;
+    if (isLoadingPageRef.current) return;
+    if (observerCooldownRef.current) return;
+
+    const firstPage = pages[0]?.page;
+
+    if (!firstPage || firstPage <= 1) return;
+
+    observerCooldownRef.current = true;
+    isLoadingPageRef.current = true;
+
+    loadPage(firstPage - 1);
+
+    setTimeout(() => {
+      observerCooldownRef.current = false;
+    }, 300);
   });
 
-  if (topRef.current) observer.observe(topRef.current);
+  const el = topRef.current;
+  if (el) observer.observe(el);
 
   return () => observer.disconnect();
-}, [pages]);
+}, [pages, loadPage]);
 
   useEffect(() => {
+      const controller = new AbortController();
+      controllerRef.current = controller;
       setPages([]);
-      loadPage(1);
-      
-    }, [search, selectedGenres, language, stars, yearRange, sortBy, sortingDirection]);
+      loadPage(1, controller.signal);
+      setHasMore(true);
+      lastLoadedPageRef.current = 1;
+      return () => {
+        controller.abort();
+      };
+    }, [debouncedSearch,search, selectedGenres, language, stars, yearRange, sortBy, sortingDirection]);
   
   useEffect(() => {
-  hasMoreRef.current = hasMore;
-}, [hasMore]);
-    // trigger collectMovie
+    hasMoreRef.current = hasMore;
+  }, [hasMore]);
 
-  // useEffect(() => {
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
 
-  //     collectMovies();
+    return () => clearTimeout(t);
+  }, [search]);
 
-  //   }, [page, search, selectedGenres, language, stars, yearRange, sortBy, sortingDirection]);
-  
-
-  // postprocess movies
-
-  const movies2 = pages.flatMap((p) => p.movies);
-  //display vars
+  //UI display params
   const sidebarRowSx = {
     display: "flex",
     gap: 1,
@@ -428,8 +444,8 @@ useEffect(() => {
   {/* Infinite scroll trigger */}
   <div ref={topRef} style={{ height: 40 }} />
    <Stack spacing={2} sx={{ mb: 3 }}>
-      {(movies2 ?? []).map((movie2, i) => (
-        <MovieCard key={ i} movie={movie2} />
+      {(movies ?? []).map((movie, i) => (
+        <MovieCard key={ i} movie={movie} />
       ))}
     </Stack>
 

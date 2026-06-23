@@ -54,10 +54,11 @@ export default function FilterPanel({
     />
 
     {/* Genres */}
+    <Tooltip title="displays movies with at least one of the followings:">
     <Typography variant="h6" sx={{ mt: 2 }}>
       Genres
     </Typography>
-
+    </Tooltip>
     
     <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
       {Array.isArray(allGenres) &&
