@@ -9,7 +9,7 @@ const LANGUAGES = [{
     code: "",
     label: "No language",
     country: "",
-  }, ...languages];  // update with a "no language" state (disable language from searching)
+  }, ...languages];  // update with a "no language" state (disable language from filtering)
 
 export default function LanguageSelector({ value, onChange }) {
   return (
@@ -27,7 +27,7 @@ export default function LanguageSelector({ value, onChange }) {
               {lang.country && (
                 <Flag code={lang.country} style={{ width: 20, height: 14 }} />
               )}
-              <span>{lang.label}</span>
+              <span>{lang.country}</span>
             </Box>
           </MenuItem>
         ))}
