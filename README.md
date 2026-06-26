@@ -36,7 +36,18 @@ npm run build
 
 ### 1. Deploy with Docker (recommanded)
 
-**Coming soon**
+From the root folder, enter: 
+```shell
+
+docker build -t webserver .
+
+docker run  --rm -it  -p 5000:5000 webserver --name webserver webserver
+# or
+docker run -d \
+  --name webserver webserver\
+  -p 5000:5000 \
+    webserver
+```
 
 ### 2. Deploy
 Not recommanded for production
