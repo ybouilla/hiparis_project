@@ -29,6 +29,13 @@ npm run build
 ```
 
 ## Deploy
+
+### 1. Deploy with Docker (recommanded)
+
+**Coming soon**
+
+### 2. Deploy
+Not recommanded for production
 Run the following command from the project root directory:
 
 ```shell
