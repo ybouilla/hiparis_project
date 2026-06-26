@@ -3,6 +3,10 @@
 ## Goal: Sujet
 Vous disposez d’un fichier contenant une base de données de films (movies.csv). Votre mission est de produire une plateforme permettant de visualiser au mieux l’intégralité de cette base de données.  
 
+Here is a short illustration of the page rendered.
+
+
+<img src="./imgs/movie_interface.gif" width="50%" height="50%"/>
 
 ## setup
 The project requires the following dependencies::
@@ -32,7 +36,18 @@ npm run build
 
 ### 1. Deploy with Docker (recommanded)
 
-**Coming soon**
+From the root folder, enter: 
+```shell
+
+docker build -t webserver .
+
+docker run  --rm -it  -p 5000:5000 webserver --name webserver webserver
+# or
+docker run -d \
+  --name webserver webserver\
+  -p 5000:5000 \
+    webserver
+```
 
 ### 2. Deploy
 Not recommanded for production
@@ -47,10 +62,6 @@ If it does not work, try to open it from an incognito browser window
 
 ## Example of usage:
 
-Here is a short illustration of the page rendered.
-
-
-<img src="./imgs/movie_interface.gif" width="50%" height="50%"/>
 
 ### How to use it? 
 
