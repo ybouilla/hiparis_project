@@ -4,6 +4,10 @@
 Vous disposez d’un fichier contenant une base de données de films (movies.csv). Votre mission est de produire une plateforme permettant de visualiser au mieux l’intégralité de cette base de données.  
 
 
+Here is a short illustration of the page rendered.
+
+<img src="./imgs/movie_interface.gif" width="50%" height="50%"/>
+
 ## setup
 The project requires the following dependencies::
 
@@ -29,6 +33,13 @@ npm run build
 ```
 
 ## Deploy
+
+### 1. Deploy with Docker (recommanded)
+
+**Coming soon**
+
+### 2. Deploy
+Not recommanded for production
 Run the following command from the project root directory:
 
 ```shell
@@ -39,11 +50,6 @@ If it does not work, try to open it from an incognito browser window
 
 
 ## Example of usage:
-
-Here is a short illustration of the page rendered.
-
-
-<img src="./imgs/movie_interface.gif" width="50%" height="50%"/>
 
 ### How to use it? 
 
