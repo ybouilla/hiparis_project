@@ -3,8 +3,8 @@
 ## Goal: Sujet
 Vous disposez d’un fichier contenant une base de données de films (movies.csv). Votre mission est de produire une plateforme permettant de visualiser au mieux l’intégralité de cette base de données.  
 
-Here is a short illustration of the page rendered.
 
+Here is a short illustration of the page rendered.
 
 <img src="./imgs/movie_interface.gif" width="50%" height="50%"/>
 
@@ -61,7 +61,6 @@ If it does not work, try to open it from an incognito browser window
 
 
 ## Example of usage:
-
 
 ### How to use it? 
 
