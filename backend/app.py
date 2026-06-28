@@ -128,7 +128,79 @@ def serve_movies():
 	}
 	return jsonify(resp), 422
 
+@app.route('/statistics', methods=['GET'])
+def serve_stats():
+	# tests : curl http://127.0.0.1:5000/statistics
+	# curl http://127.0.0.1:5000/statistics?dates=1990&dates=2020
 
+	df = load_csv()
+
+	dates = request.args.getlist("dates", )
+	
+
+	if len(dates) == 2:
+		if dates[0] == dates[1]:
+			dates[1] = 1 + int(dates[1])
+		df = df[(df["Release_Date"].dt.year >= int(dates[0])) & (df["Release_Date"].dt.year < int(dates[1]))]
+	
+	# min
+	mins = [df["Popularity"].min(), df["Vote_Count"].min(), df["Vote_Average"].min()]
+	# maxs
+	maxs = [df["Popularity"].max(), df["Vote_Count"].max(), df["Vote_Average"].max()]
+
+	# quartiles
+
+	q_pop = df["Popularity"].quantile([0.25,0.5,0.75]).to_list() 
+
+	q_vote_count = df["Vote_Count"].quantile([0.25,0.5,0.75]).to_list()
+	q_vote_avg = df["Vote_Average"].quantile([0.25,0.5,0.75]).to_list()
+
+
+	# count by country
+	_all_countries = set(df["Original_Language"])
+	
+	countries_stats = {}
+	for _country in _all_countries:
+		countries_stats[_country] = len(df[df["Original_Language"] == _country])
+	# count by genre
+	_all_genre = set(df["Genre"])
+	# _all_genre = {x.split(",") for x in _all_genre}
+	genre_stats  = (
+    df["Genre"]
+    .str.split(",")
+    .explode()
+    .str.strip()      
+    .value_counts()
+	.to_dict()
+)
+
+	resp = {
+		'message': 'ok',
+		'stats_pop': {
+			'min': int(mins[0]),
+			 'q1': q_pop[0],
+			'q2': q_pop[1],
+			'q3': q_pop[2],
+			'max': int(maxs[0])
+		},
+		'stats_vote_count': {
+			'min': int(mins[1]),
+			'q1': q_vote_count[0],
+			'q2': q_vote_count[1],
+			'q3': q_vote_count[2],
+			'max': int(maxs[1])
+		},
+		'stats_vote_avg': {
+			'min': int(mins[2]),
+			'q1': q_vote_avg[0],
+			'q2': q_vote_avg[1],
+			'q3': q_vote_avg[2],
+			'max': int(maxs[2])
+		},
+		'stats_countries': countries_stats,
+		'stats_genre': genre_stats
+	}
+	return jsonify(resp), 201
 
 @app.route('/')
 def index():

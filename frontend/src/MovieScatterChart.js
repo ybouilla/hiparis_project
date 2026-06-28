@@ -51,7 +51,7 @@ export default function MovieScatterChart({chartData, color, yLabel}){
       ))}
         </text>
       );
-      console.log("lin", )
+
 };
     return (<div>
                   <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
