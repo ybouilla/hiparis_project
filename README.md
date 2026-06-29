@@ -8,8 +8,8 @@ Here is a short illustration of the page rendered.
 
 <img src="./imgs/movie_interface.gif" width="50%" height="50%"/>
 
-## setup
-The project requires the following dependencies::
+## Setup (not needed if docker is used - see below)
+The project requires the following dependencies:
 
 * [`uv`](https://docs.astral.sh/uv/) or any other Python virtual environment
 * npm (version 10 or above) or pnpm
@@ -36,9 +36,10 @@ npm run build
 
 ### 1. Deploy with Docker (recommanded)
 
-From the root folder, enter: 
-```shell
+For docker installation, please visit [docker website](https://docs.docker.com/engine/install/) 
 
+From the root folder, enter in your terminal: 
+```shell
 docker build -t webserver .
 
 docker run  --rm -it  -p 5000:5000 webserver --name webserver webserver
@@ -49,7 +50,7 @@ docker run -d \
     webserver
 ```
 
-### 2. Deploy
+### 2. Deploy without docker
 Not recommanded for production
 Run the following command from the project root directory:
 
@@ -86,6 +87,10 @@ Axes are normalized when 2 or more features are displayed (min-max normalization
 <img src="./imgs/movie_explorer2.jpg" width="50%" height="50%"/>
 
 Nota: only a maximum of 500 points can be displayed. 
+
+Illustration:
+
+<img src="./imgs/movie_interface_stats.gif" width="50%" height="50%"/>
 
 ## Debug
 for debugging or switching to development mode
