@@ -110,8 +110,25 @@ To run the full project in development mode, start the backend and frontend in t
 
 ## Tests
 
-*Coming soon*
+### Backend tests
+To test backend, run from the root folder: 
 
+**Unit and integration tests**
+```shell
+
+python -m pytest 
+```
+
+**Api performance evaluation (stress test):**
+
+```shell
+locust -f backend/performance/locustfile.py --host=http://localhost:5000 --headless -u 100 -t 2m --html report.html
+```
+with `u`number of users
+`-t`: stress test time
+### Frontend tests 
+
+*coming soon*
 ## Possible improvements:
 
 **Regarding architecture**:
@@ -125,7 +142,9 @@ To run the full project in development mode, start the backend and frontend in t
 - add button to get directly to the top / the bottom of the results
 - display more points for graph (current chart displays only 500 points)
 - Improve page responsiveness.
+- measure website perfs
 
 **backend**:
 - Handle errors and invalid API requests. 
-- Add a REST endpoint for sampling data points displayed in charts.
+- improve application security
+- add middleware + nginx as reverse proxy
