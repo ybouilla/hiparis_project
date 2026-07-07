@@ -313,7 +313,7 @@ const dislayYAxis = (points, isReqNormalized)=> {
       const LanguageData= Object.entries(statsResponse.data.stats_countries).map(([country, count]) => ({
             country,
             count,
-          })).filter((item) => item.count>5);
+          })).filter((item) => item.count>5); // select only countries with more than 5 movies
 
         setStatsGenreLang({"Genre": genreData,
           "Language": LanguageData
@@ -351,7 +351,9 @@ const dislayYAxis = (points, isReqNormalized)=> {
         country,
         count,
       })).filter((item) => item.count>5);
+
 console.log("genredata2", genreData)
+  // generate flag icon for chart
   const FlagTick = ({ x, y, payload }) => {
         const code = payload.value.toLowerCase();
         const code2 = Object.fromEntries(languages.map(lang => [lang.code, lang.country]));

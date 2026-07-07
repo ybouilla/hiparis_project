@@ -3,3 +3,11 @@
 // expect(element).toHaveTextContent(/react/i)
 // learn more: https://github.com/testing-library/jest-dom
 import '@testing-library/jest-dom';
+
+// jsdom doesn't implement IntersectionObserver; App.js's infinite-scroll
+// effects need a stub or they throw ReferenceError during render in tests.
+global.IntersectionObserver = class IntersectionObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};

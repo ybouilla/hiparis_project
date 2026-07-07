@@ -88,24 +88,28 @@ export default function FilterPanel({
     
     <Tooltip title="Filter by original language"
       placement="right"
-    > 
-      <Typography sx={{ mt: 2 }}>
-        <strong>Original Languages</strong>
-      </Typography>
-      <LanguageSelector value={language} onChange={setLanguage} />
+    >
+      <Box>
+        <Typography sx={{ mt: 2 }}>
+          <strong>Original Languages</strong>
+        </Typography>
+        <LanguageSelector value={language} onChange={setLanguage} />
+      </Box>
     </Tooltip>
     {/* Rating */}
     <Box sx={{ mt: 2 }}>
       <Tooltip title="Filter using stars (1 star = 2 score points)"
         placement="right"
-      > 
+      >
+      <Box>
       <Typography><strong>Movie rate: {stars} stars </strong></Typography>
-      
+
       <Rating
         value={stars}
         precision={0.5}
         onChange={(_, s) => setStars(s)}
       />
+      </Box>
       </Tooltip>
     </Box>
 
@@ -113,22 +117,24 @@ export default function FilterPanel({
     <Box sx={{ mt: 2 }}>
       <Tooltip title="Year of release"
         placement="right"
-      > 
-        <Typography gutterBottom><strong>Release Years</strong></Typography>
-        <Slider
-          value={yearRange}
-          min={minDate}
-          max={new Date().getFullYear()}
-          step={1}
-          valueLabelDisplay="auto"
-          disableSwap
-          onChange={(_, value) => setYearRange(value)}
-          sx={{
-                "& .MuiSlider-valueLabel": {
-                zIndex: 9999,
-                },
-                }}
-        />
+      >
+        <Box>
+          <Typography gutterBottom><strong>Release Years</strong></Typography>
+          <Slider
+            value={yearRange}
+            min={minDate}
+            max={new Date().getFullYear()}
+            step={1}
+            valueLabelDisplay="auto"
+            disableSwap
+            onChange={(_, value) => setYearRange(value)}
+            sx={{
+                  "& .MuiSlider-valueLabel": {
+                  zIndex: 9999,
+                  },
+                  }}
+          />
+        </Box>
       </Tooltip>
     </Box>
   </Box>

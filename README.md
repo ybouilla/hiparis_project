@@ -128,6 +128,16 @@ with `u`number of users
 `-t`: stress test time
 ### Frontend tests 
 
+
+**Unit tests**
+
+jest is defined in the `packages.json`
+```shell
+
+npm test
+```
+
+**End-to-end tests**
 *coming soon*
 ## Possible improvements:
 

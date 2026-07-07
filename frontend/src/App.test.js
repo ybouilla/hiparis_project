@@ -1,8 +1,23 @@
+import React from 'react';
 import { render, screen } from '@testing-library/react';
+
 import App from './App';
 
-test('renders learn react link', () => {
+
+jest.mock("react-router-dom", () => {
+  const React = require('react');
+  return {
+    Link: React.forwardRef(({ children, to, ...rest }, ref) => (
+      <a href={to} ref={ref} {...rest}>{children}</a>
+    )),
+  };
+}, { virtual: true });
+
+test('renders the movie explorer title', () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+  const titleElement = screen.getByText(/Movie Explorer/i);
+  expect(titleElement).toBeInTheDocument();
 });
+
+
+

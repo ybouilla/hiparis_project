@@ -8,7 +8,7 @@ import languages from "./languages.json";
 const LANGUAGES = [{
     code: "",
     label: "No language",
-    country: "",
+    country: "No language",
   }, ...languages];  // update with a "no language" state (disable language from filtering)
 
 export default function LanguageSelector({ value, onChange }) {
