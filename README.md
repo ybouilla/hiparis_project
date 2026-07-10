@@ -118,7 +118,7 @@ To test backend, run from the root folder:
 
 uv run -m pytest 
 ```
-get test backend test coverage  table by running:
+get test backend test coverage table by running:
 
 ```shell
 uv run -m pytest --cov=backend
@@ -126,11 +126,17 @@ uv run -m pytest --cov=backend
 
 **Api performance evaluation (stress test):**
 
+First launch the application
+```shell
+gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
+```
+
+then run the tests:
 ```shell
 locust -f backend/performance/locustfile.py --host=http://localhost:5000 --headless -u 100 -t 2m --html report.html
 ```
 with `u`number of users
-`-t`: stress test time
+`-t`: stress test time (2m = 2 mins)
 ### Frontend tests 
 
 

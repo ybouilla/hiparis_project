@@ -45,8 +45,6 @@ import qs from 'qs';
 import { Link, } from "react-router-dom";
 import CustomTooltip from "./CustomTooltip";
 import MovieScatterChart from "./MovieScatterChart";
-import { ResponsiveBoxPlot } from "@nivo/boxplot";
-import BoxPlot from "./BoxPlot";
 import BoxplotEcharts from "./BoxplotEcharts";
 import languages from "./languages.json";
 //import { isRenderableText } from "recharts/types/component/Text";
