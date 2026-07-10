@@ -470,7 +470,7 @@ useEffect(() => {
 
 
   {hasMore && movies.length > 0 && (
-    <div ref={loadMoreRef} style={{ height: 40 }} />
+    <div ref={loadMoreRef} data-testid="feed-loader" style={{ height: 40 }} />
   )}
 
 {page < totalPages && (

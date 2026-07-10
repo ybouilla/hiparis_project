@@ -192,7 +192,7 @@ function MovieGraph() {
 
   const min_date = 1940;
    const [movies2, setMovies2] = useState([] );
-   const [yearRange2, setYearRange2] = useState([1900, 2026]);
+   const [yearRange2, setYearRange2] = useState([1900, 2025]);
    const [totalMovies2, setTotalMovies2] = useState(500); // nb of points displayed for graph
    const [stats, setStats] = useState({
     'Popularity': exBoxplotStats,
@@ -483,6 +483,7 @@ console.log("genredata2", genreData)
           </Typography>
           </Box>
           <Slider
+            data-testid="release-year-slider"
             value={yearRange2}
             min={minDate2}
             max={2025}

@@ -116,7 +116,12 @@ To test backend, run from the root folder:
 **Unit and integration tests**
 ```shell
 
-python -m pytest 
+uv run -m pytest 
+```
+get test backend test coverage  table by running:
+
+```shell
+uv run -m pytest --cov=backend
 ```
 
 **Api performance evaluation (stress test):**
@@ -138,7 +143,19 @@ npm test
 ```
 
 **End-to-end tests**
-*coming soon*
+
+End-to-end Tests are done using playwright
+```shell
+npm build
+npx playwright test
+```
+
+If you want to run test with an interface (very ressource consuming): 
+```shell
+npx playwright install chromium 
+npx playwright test --ui
+```
+
 ## Possible improvements:
 
 **Regarding architecture**:

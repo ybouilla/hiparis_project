@@ -11,7 +11,7 @@ def client():
 
 
 class TestAllMovies:
-    """tests API /allmovies"""
+    """Integration tests API /allmovies"""
     def test_01_no_filters(self, client):
         response = client.get("/allmovies")
 
