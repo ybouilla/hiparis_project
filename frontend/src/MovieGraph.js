@@ -45,8 +45,6 @@ import qs from 'qs';
 import { Link, } from "react-router-dom";
 import CustomTooltip from "./CustomTooltip";
 import MovieScatterChart from "./MovieScatterChart";
-import { ResponsiveBoxPlot } from "@nivo/boxplot";
-import BoxPlot from "./BoxPlot";
 import BoxplotEcharts from "./BoxplotEcharts";
 import languages from "./languages.json";
 //import { isRenderableText } from "recharts/types/component/Text";
@@ -192,7 +190,7 @@ function MovieGraph() {
 
   const min_date = 1940;
    const [movies2, setMovies2] = useState([] );
-   const [yearRange2, setYearRange2] = useState([1900, 2026]);
+   const [yearRange2, setYearRange2] = useState([1900, 2025]);
    const [totalMovies2, setTotalMovies2] = useState(500); // nb of points displayed for graph
    const [stats, setStats] = useState({
     'Popularity': exBoxplotStats,
@@ -313,7 +311,7 @@ const dislayYAxis = (points, isReqNormalized)=> {
       const LanguageData= Object.entries(statsResponse.data.stats_countries).map(([country, count]) => ({
             country,
             count,
-          })).filter((item) => item.count>5);
+          })).filter((item) => item.count>5); // select only countries with more than 5 movies
 
         setStatsGenreLang({"Genre": genreData,
           "Language": LanguageData
@@ -351,7 +349,9 @@ const dislayYAxis = (points, isReqNormalized)=> {
         country,
         count,
       })).filter((item) => item.count>5);
+
 console.log("genredata2", genreData)
+  // generate flag icon for chart
   const FlagTick = ({ x, y, payload }) => {
         const code = payload.value.toLowerCase();
         const code2 = Object.fromEntries(languages.map(lang => [lang.code, lang.country]));
@@ -481,6 +481,7 @@ console.log("genredata2", genreData)
           </Typography>
           </Box>
           <Slider
+            data-testid="release-year-slider"
             value={yearRange2}
             min={minDate2}
             max={2025}

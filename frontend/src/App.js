@@ -28,7 +28,7 @@ import { Link, } from "react-router-dom";
 import MovieCard from "./MovieCard";
 import FilterPanel from "./FilterPanel";
 import SortPanel from "./SortPanel";
-
+import { handleIntersection } from "./utils/handleIntersection";
 
 const moviesData = [
   {
@@ -66,7 +66,6 @@ const moviesData = [
   }
 ]
 const PAGE_SIZE = 20;
-const WINDOW_SIZE = 10;
 const min_dates = 1900;
 export default function App() {
   const df = moviesData;
@@ -93,31 +92,34 @@ export default function App() {
 
 
   // use ref definitions
-  const topRef = useRef(null);
-  const loadMoreRef = useRef(null);
-  const isLoadingPageRef = useRef(false);
-  const hasMoreRef = useRef(true);
-  const lastLoadedPageRef = useRef(1);
-  const controllerRef = useRef(null);
+  const topRef = useRef(null);  // scroller up sentinelle
+  /*DOM anchor for the "scroll up" IntersectionObserver — 
+  an empty sentinel <div> above the movie list; when it enters the viewport,
+   triggers loading the previous page.*/
+  const loadMoreRef = useRef(null);  // scroller down sentinelle
+  const isLoadingPageRef = useRef(false); //Ref-mirror of isLoadingPage state ( sync flag)
+  const hasMoreRef = useRef(true);  //Ref-mirror of hasMore state ( sync flag)
+ // const lastLoadedPageRef = useRef(1);
+  //const controllerRef = useRef(null);
   const observerCooldownRef = useRef(false);
-  const containerRef = useRef(null);
+
 
   // memoization
   const movies = useMemo(() =>
   pages.flatMap(p => p.movies),
 [pages]);
-  const genres = useMemo(() => {
-    const set = new Set();
-    console.log("movies =", movies);
-    console.log("lang memo", language)
-    console.log("is array?", Array.isArray(movies));
+  // const genres = useMemo(() => {
+  //   const set = new Set();
+  //   console.log("movies =", movies);
+  //   console.log("lang memo", language)
+  //   console.log("is array?", Array.isArray(movies));
   
-    if (!Array.isArray(movies) || movies.length === 0 ) return [];
-    movies.forEach((m) => {
-      m.Genre?.split(",").forEach((g) => set.add(g.trim()));
-    });
-    return [...set].sort();
-  }, [movies]);
+  //   if (!Array.isArray(movies) || movies.length === 0 ) return [];
+  //   movies.forEach((m) => {
+  //     m.Genre?.split(",").forEach((g) => set.add(g.trim()));
+  //   });
+  //   return [...set].sort();
+  // }, [movies]);
 
   const toggleGenre = (genre) => {
     setPage(1);
@@ -188,7 +190,7 @@ const filtered = useMemo(() => {
     setIsLoadingPage(true);
     isLoadingPageRef.current = true;
     try{
-      const newMovies = await collectMovies(pageNumber);
+      const newMovies = await collectMovies(pageNumber, signal);
 
     if (!newMovies || newMovies.length === 0) {
       setHasMore(false);
@@ -199,7 +201,7 @@ const filtered = useMemo(() => {
       if (exists) return prev;
 
       const updated = [...prev, { page: pageNumber, movies: newMovies }];
-      lastLoadedPageRef.current = pageNumber;
+      //lastLoadedPageRef.current = pageNumber;
       // keep only window
 
 
@@ -271,22 +273,16 @@ useEffect(() => {
  * Prevents requests when already at the first page.
  */
 useEffect(() => {
-  const observer = new IntersectionObserver((entries) => {
-    const entry = entries[0];
-    //safeguards
-    if (!entry.isIntersecting) return;
-    if (!hasMoreRef.current) return;
-    if (isLoadingPageRef.current) return;
-    if (observerCooldownRef.current) return;
+  const observer = new IntersectionObserver(([entry]) => {
+  handleIntersection({
+    entry,
+    hasMore: hasMoreRef.current,
+    isLoading: isLoadingPageRef.current,
+    cooldown: observerCooldownRef.current,
+    firstPage: pages[0]?.page,
+    loadPage,
+  });
 
-    const firstPage = pages[0]?.page;
-
-    if (!firstPage || firstPage <= 1) return;
-
-    observerCooldownRef.current = true;
-    isLoadingPageRef.current = true;
-
-    loadPage(firstPage - 1);
 
     setTimeout(() => {
       observerCooldownRef.current = false;
@@ -305,11 +301,11 @@ useEffect(() => {
  */
   useEffect(() => {
       const controller = new AbortController();
-      controllerRef.current = controller;
+      //controllerRef.current = controller;
       setPages([]);
       loadPage(1, controller.signal);
       setHasMore(true);
-      lastLoadedPageRef.current = 1;
+      //lastLoadedPageRef.current = 1;
       return () => {
         controller.abort();
       };
@@ -474,7 +470,7 @@ useEffect(() => {
 
 
   {hasMore && movies.length > 0 && (
-    <div ref={loadMoreRef} style={{ height: 40 }} />
+    <div ref={loadMoreRef} data-testid="feed-loader" style={{ height: 40 }} />
   )}
 
 {page < totalPages && (

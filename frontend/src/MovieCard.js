@@ -13,7 +13,7 @@ export default function MovieCard({ movie }) {
     ? new Date(movie.Release_Date).toISOString().split("T")[0]
     : null;
   return (
-    <Card sx={{ display: "flex" }}>
+    <Card sx={{ display: "flex" }} data-testid="feed-item">
       <CardMedia
         component="img"
         sx={{ width: 140 }}
