@@ -129,3 +129,43 @@ jobs:
           sleep 5
           uv run locust -f backend/performance/locustfile.py --host=http://localhost:5000 --headless -u 100 -t 2m
 
+  docker-test:
+    strategy:
+      matrix:
+        os:
+          - ubuntu-24.04
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t webserver .
+
+      - name: Run container
+        run: docker run -d -it  --name webserver -e MODE=serve -p 5000:5000 webserver 
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.28"
+
+      - name: Run backend stress test with docker
+        run: |
+          uv venv --python 3.12
+          source .venv/bin/activate
+          uv pip install locust
+          sleep 5
+          uv run locust -f backend/performance/locustfile.py --host=http://localhost:5000 --headless -u 100 -t 2m
+          sleep 5
+      
+      - name: clean up and run test through docker
+        run: | 
+          docker rm -f webserver
+          docker run -d -it --name webserver -e MODE=test -p 5000:5000 webserver
+
+      - name: clean up
+        run: docker rm -f webserver
+

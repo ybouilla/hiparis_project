@@ -31,11 +31,17 @@ COPY backend/ ./backend
 # copy frontend
 COPY frontend ./frontend
 
-ENV PYTHONPATH=/app
+# copy entrypoint
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENV PYTHONPATH=/
 
 COPY --from=frontend-builder /frontend/build ./frontend/build
 
 EXPOSE 5000
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["serve"]
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "backend.wsgi:app"]
+
 
