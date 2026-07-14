@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 
-//simply move around test
+//simply move around webpage
 test('test', async ({ page }) => {
   await page.goto('http://127.0.0.1:5000/');
   await page.getByRole('link', { name: 'Movie', exact: true }).click();

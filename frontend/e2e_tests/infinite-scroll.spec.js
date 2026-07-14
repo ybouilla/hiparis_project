@@ -5,7 +5,7 @@ test('loads more items when scrolling', async ({ page }) => {
 
   const items = page.locator('[data-testid="feed-item"]');
 
-  await expect(items).toHaveCount(20);
+  await expect(items).toHaveCount(20); // nb of movies per refreshs
 
   await page.getByTestId('feed-loader').scrollIntoViewIfNeeded();
 

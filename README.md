@@ -42,10 +42,11 @@ From the root folder, enter in your terminal:
 ```shell
 docker build -t webserver .
 
-docker run  --rm -it  -p 5000:5000 webserver --name webserver webserver
+docker run  --rm -it -e MODE=serve -p 5000:5000 webserver --name webserver 
 # or
 docker run -d \
-  --name webserver webserver\
+  -e MODE=serve
+  --name webserver \
   -p 5000:5000 \
     webserver
 ```
@@ -109,8 +110,7 @@ npm start
 To run the full project in development mode, start the backend and frontend in two separate terminals.
 
 ## Tests
-
-### Backend tests
+### Backend tests (without docker)
 To test backend, run from the root folder: 
 
 **Unit and integration tests**
@@ -126,32 +126,37 @@ uv run -m pytest --cov=backend
 
 **Api performance evaluation (stress test):**
 
-First launch the application
+First launch the application; either through `gunicorn`
 ```shell
 gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
 ```
+or with docker:
 
+```shell
+docker run  --rm -it -e MODE=serve -p 5000:5000 webserver --name webserver 
+```
 then run the tests:
 ```shell
 locust -f backend/performance/locustfile.py --host=http://localhost:5000 --headless -u 100 -t 2m --html report.html
 ```
 with `u`number of users
 `-t`: stress test time (2m = 2 mins)
-### Frontend tests 
+### Frontend tests (without docker)
 
 
 **Unit tests**
 
-jest is defined in the `packages.json`
+jest is defined in the `packages.json`. From the root folder
 ```shell
-
+cd frontend
 npm test
 ```
 
 **End-to-end tests**
 
-End-to-end Tests are done using playwright
+End-to-end Tests are done using playwright. From the root folder:
 ```shell
+cd frontend
 npm build
 npx playwright test
 ```
@@ -162,6 +167,22 @@ npx playwright install chromium
 npx playwright test --ui
 ```
 
+### Test with docker
+
+I provided a mode  to be able to run tests through docker:
+in a terminal, enter:
+
+```shell
+docker run  --rm -it -e MODE=test -p 5000:5000 webserver --name webserver 
+
+docker logs webserver # display test logs
+```
+
+### CI/CD
+
+Tests are re-used when running CI:
+for more details, please see `.github/workflow/build_test`file.
+ 
 ## Possible improvements:
 
 **Regarding architecture**:
