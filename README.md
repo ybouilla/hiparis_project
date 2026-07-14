@@ -4,7 +4,7 @@
 Vous disposez d’un fichier contenant une base de données de films (movies.csv). Votre mission est de produire une plateforme permettant de visualiser au mieux l’intégralité de cette base de données.  
 
 
-Here is a short illustration of the page rendered.
+Here is a short illustration of the rendered page.
 
 <img src="./imgs/movie_interface.gif" width="50%" height="50%"/>
 
@@ -181,7 +181,7 @@ docker logs webserver # display test logs
 ### CI/CD
 
 Tests are re-used when running CI:
-for more details, please see `.github/workflow/build_test`file.
+for more details, please see `.github/workflow/build_test` file.
  
 ## Possible improvements:
 
