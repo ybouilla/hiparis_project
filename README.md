@@ -81,7 +81,7 @@ Another panel called `sort` let the user orders the results, given Popularity, V
 
 2. **Movie statistics**
 
-This webpage display statistics on popularity, vote count and vote average.
+This webpage displays statistics on popularity, vote count and vote average.
 It allows users to explore whether popularity is correlated with vote count or vote average, regarding the release dates.
 Axes are normalized when 2 or more features are displayed (min-max normalization).
 
