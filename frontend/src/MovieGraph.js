@@ -37,9 +37,11 @@ import {
   List,
   ListItem,
   ListItemText, 
-
+  useTheme,
+  useMediaQuery
 } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
+
 import axios from 'axios';
 import qs from 'qs';
 import { Link, } from "react-router-dom";
@@ -350,6 +352,10 @@ const dislayYAxis = (points, isReqNormalized)=> {
         count,
       })).filter((item) => item.count>5);
 
+  // respponsiveness
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  
 console.log("genredata2", genreData)
   // generate flag icon for chart
   const FlagTick = ({ x, y, payload }) => {
@@ -409,7 +415,9 @@ console.log("genredata2", genreData)
 
       {/*  Side Drawer */}
       <Drawer
-        variant="permanent"
+        variant={isMobile ? "temporary" : "permanent"}
+        open={isMobile ? open : true}
+        onClose={() => setOpen(false)}
         sx={{
           width: open ? drawerWidth : miniWidth,
           flexShrink: 0,

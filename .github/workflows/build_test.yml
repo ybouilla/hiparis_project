@@ -1,4 +1,4 @@
-# Exemple minimal d'un workflow
+# minimal test workflow
 name: Tests
 
 on:

@@ -20,7 +20,8 @@ import {
 import MenuOpenIcon from "@mui/icons-material/MenuOpen";
 import Tooltip from "@mui/material/Tooltip";
 import MenuIcon from "@mui/icons-material/Menu";
-
+import { useTheme, useMediaQuery } from "@mui/material";
+ 
 import axios from 'axios';
 import qs from 'qs';
 import { Link, } from "react-router-dom";
@@ -332,6 +333,14 @@ useEffect(() => {
     return () => clearTimeout(t);
   }, [search]);
 
+  // respponsiveness
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+
+  useEffect(() => {
+    if (isMobile) setOpenSideBar(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   //UI display params
   const sidebarRowSx = {
     display: "flex",
@@ -346,6 +355,17 @@ useEffect(() => {
       {/* Top bar */}
       <AppBar position="fixed">
         <Toolbar>
+          { (
+            <IconButton
+              color="inherit"
+              onClick={() => setOpenSideBar((p) => !p)}
+              size="small"
+              aria-label={openSideBar ? "Collapse sidebar" : "Expand sidebar"}
+              sx={{ mr: 1 }}
+            >
+              {openSideBar ? <MenuOpenIcon /> : <MenuIcon />}
+            </IconButton>
+          )}
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             🎬 Movie Explorer
           </Typography>
@@ -360,7 +380,9 @@ useEffect(() => {
 
       {/* Sidebar */}
       <Drawer
-        variant="permanent"
+        variant={isMobile ? "temporary" : "permanent"}
+        open={isMobile ? openSideBar : true}
+        onClose={() => setOpenSideBar(false)}
         sx={{
           width: openSideBar ? 280 : 72,
           flexShrink: 0,
@@ -377,13 +399,7 @@ useEffect(() => {
       >
       
   <Box sx={{ p: 1, display: "flex",  flexDirection: "column", gap: .5}}>
-    <IconButton
-      onClick={() => setOpenSideBar((p) => !p)}
-      size="small"
-    >
-      {openSideBar ? "COLLAPSE ": ""}
-      {openSideBar ? <MenuOpenIcon /> : <MenuIcon />}
-  </IconButton>
+    
     <Box sx={sidebarRowSx}>
       <Button disabled={filterPanel} variant="outlined" onClick={() => setFilterPanel(true)}>
         Filters
