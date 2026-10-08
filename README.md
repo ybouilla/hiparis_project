@@ -51,6 +51,15 @@ docker run -d \
     webserver
 ```
 
+#### Scaled deployment (docker compose)
+
+nginx load-balances several stateless app replicas:
+```shell
+docker compose up -d --build          # 2 replicas by default
+docker compose up -d --scale app=4    # rescale live
+APP_REPLICAS=4 WEB_CONCURRENCY=2 PORT=5000 docker compose up -d
+```
+
 ### 2. Deploy without docker
 Not recommanded for production
 Run the following command from the project root directory:

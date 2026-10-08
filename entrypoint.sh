@@ -19,9 +19,7 @@ case "$MODE" in
       
   serve)
     echo "Running server..."
-    gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
-
-    echo "Done."
+    exec gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
         ;;
     *)
         echo "Unknown MODE: $MODE"
