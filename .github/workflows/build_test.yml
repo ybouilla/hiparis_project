@@ -303,3 +303,80 @@ jobs:
       - name: Clean up
         if: always() && steps.cf.outputs.enabled == 'true'
         run: docker compose --profile cloudflare down -v
+
+  cloudflare-quick-tunnel-test:
+    # Same load test through a throwaway https://<random>.trycloudflare.com tunnel.
+    # No Cloudflare account, secret or domain needed. It checks that the app is
+    # reachable and load-balanced through Cloudflare's network, but not your zone's
+    # cache rules / WAF (see cloudflare-test for that).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.28"
+
+      - name: Start stack with 4 replicas
+        env:
+          APP_REPLICAS: 4
+          GUNICORN_CMD_ARGS: "--access-logfile -"
+        run: docker compose up -d --build --wait
+
+      - name: Open quick tunnel to nginx
+        run: |
+          # host network: reach nginx on the port compose publishes (5000).
+          # http2 instead of the default QUIC, in case UDP is filtered.
+          docker run -d --name cf-quick --network host cloudflare/cloudflared:latest \
+            tunnel --no-autoupdate --protocol http2 --url http://localhost:5000
+          for i in $(seq 1 30); do
+            url=$(docker logs cf-quick 2>&1 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | head -1 || true)
+            [ -n "$url" ] && break
+            sleep 2
+          done
+          test -n "$url" || { echo "::error::no trycloudflare URL found"; docker logs cf-quick; exit 1; }
+          echo "Tunnel URL: $url"
+          echo "TUNNEL_URL=$url" >> "$GITHUB_ENV"
+
+      - name: Wait for the public hostname
+        # DNS for a fresh trycloudflare hostname can take several seconds to appear
+        run: curl -fsS --retry 30 --retry-delay 3 --retry-all-errors -o /dev/null "$TUNNEL_URL/"
+
+      - name: Load test through the quick tunnel
+        run: |
+          uv venv --python 3.12
+          source .venv/bin/activate
+          uv pip install locust
+          uv run locust -f backend/performance/locustfile.py --host="$TUNNEL_URL" \
+            --headless -u 50 -t 1m --html quick-tunnel-report.html
+
+      - name: Check load was spread across all replicas
+        run: |
+          for id in $(docker compose ps -q app); do
+            n=$(docker logs "$id" 2>&1 | grep -c "GET /allmovies" || true)
+            echo "replica ${id:0:12}: $n requests"
+            test "$n" -gt 0
+          done
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quick-tunnel-report
+          path: quick-tunnel-report.html
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          docker logs cf-quick --tail=50 || true
+          docker compose logs --tail=100
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f cf-quick || true
+          docker compose down -v

@@ -59,7 +59,8 @@ services:
     profiles: ["cloudflare"]
     command: tunnel --no-autoupdate run
     environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}
+      # empty default: interpolation runs even when the profile is inactive
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:
       - nginx
     restart: unless-stopped
