@@ -169,3 +169,137 @@ jobs:
       - name: clean up
         run: docker rm -f webserver
 
+  scalability-test:
+    # Load test through nginx with several app replicas, then check that
+    # (1) scaling up live is picked up and (2) every replica served traffic.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.28"
+
+      - name: Start stack with 2 replicas
+        env:
+          APP_REPLICAS: 2
+          GUNICORN_CMD_ARGS: "--access-logfile -"
+        run: docker compose up -d --build --wait
+
+      - name: Scale up to 4 replicas live
+        env:
+          GUNICORN_CMD_ARGS: "--access-logfile -"
+        run: |
+          docker compose up -d --scale app=4 --no-recreate --wait
+          # nginx re-resolves the `app` DNS name every 5s
+          sleep 10
+          test "$(docker compose ps -q app | wc -l)" -eq 4
+
+      - name: Load test through nginx
+        run: |
+          uv venv --python 3.12
+          source .venv/bin/activate
+          uv pip install locust
+          # locust exits non-zero if any request failed
+          uv run locust -f backend/performance/locustfile.py --host=http://localhost:5000 \
+            --headless -u 100 -t 1m --html scalability-report.html
+
+      - name: Check load was spread across all replicas
+        run: |
+          for id in $(docker compose ps -q app); do
+            n=$(docker logs "$id" 2>&1 | grep -c "GET /allmovies" || true)
+            echo "replica ${id:0:12}: $n requests"
+            test "$n" -gt 0
+          done
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scalability-report
+          path: scalability-report.html
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail=100
+
+      - name: Clean up
+        if: always()
+        run: docker compose down -v
+
+  cloudflare-test:
+    # Same load test, but through a real Cloudflare Tunnel + public hostname.
+    # Needs repo secret CLOUDFLARE_TUNNEL_TOKEN and repo variable CLOUDFLARE_URL
+    # (e.g. https://movies.example.com). Skipped when they are not set, and on
+    # PRs from forks (no access to secrets).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Cloudflare configuration
+        id: cf
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+          URL: ${{ vars.CLOUDFLARE_URL }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$URL" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CLOUDFLARE_TUNNEL_TOKEN / CLOUDFLARE_URL not set, skipping Cloudflare test"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v6
+        if: steps.cf.outputs.enabled == 'true'
+        with:
+          python-version-file: ".python-version"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        if: steps.cf.outputs.enabled == 'true'
+        with:
+          version: "0.11.28"
+
+      - name: Start stack with Cloudflare Tunnel
+        if: steps.cf.outputs.enabled == 'true'
+        env:
+          APP_REPLICAS: 4
+          CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+        run: docker compose --profile cloudflare up -d --build --wait
+
+      - name: Wait for the public hostname
+        if: steps.cf.outputs.enabled == 'true'
+        run: curl -fsS --retry 20 --retry-delay 3 --retry-all-errors -o /dev/null "${{ vars.CLOUDFLARE_URL }}/"
+
+      - name: Report edge cache status
+        if: steps.cf.outputs.enabled == 'true'
+        run: |
+          # informational: HIT only if a Cache Rule makes /allmovies cacheable
+          for i in 1 2; do
+            curl -sS -D - -o /dev/null "${{ vars.CLOUDFLARE_URL }}/allmovies" | grep -i -E "^(HTTP|cf-cache-status)" || true
+          done
+
+      - name: Load test through Cloudflare
+        if: steps.cf.outputs.enabled == 'true'
+        run: |
+          uv venv --python 3.12
+          source .venv/bin/activate
+          uv pip install locust
+          # fewer users than the local test: Cloudflare may rate-limit / challenge a burst from one IP
+          uv run locust -f backend/performance/locustfile.py --host="${{ vars.CLOUDFLARE_URL }}" \
+            --headless -u 50 -t 1m --html cloudflare-report.html
+
+      - name: Upload report
+        if: always() && steps.cf.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-report
+          path: cloudflare-report.html
+
+      - name: Clean up
+        if: always() && steps.cf.outputs.enabled == 'true'
+        run: docker compose --profile cloudflare down -v

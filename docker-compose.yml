@@ -15,6 +15,8 @@ services:
       # gunicorn reads WEB_CONCURRENCY natively (default is 1 worker).
       # Each worker holds its own copy of the movies DataFrame in memory.
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      # Extra gunicorn flags, e.g. "--access-logfile -" to log every request.
+      GUNICORN_CMD_ARGS: ${GUNICORN_CMD_ARGS:-}
     # No `ports:` and no `container_name:` -- both would prevent scaling.
     # Replicas are only reachable by nginx through Docker's internal DNS.
     expose:
@@ -46,4 +48,18 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Optional: exposes nginx through a Cloudflare Tunnel (no inbound port needed).
+  #   CLOUDFLARE_TUNNEL_TOKEN=... docker compose --profile cloudflare up -d
+  # In the Cloudflare Zero Trust dashboard, set the tunnel's public hostname
+  # service to http://nginx:80.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["cloudflare"]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - nginx
     restart: unless-stopped
