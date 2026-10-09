@@ -34,11 +34,20 @@ jobs:
         with:
           node-version: 22
       - name: execute test
+        # bash (also on Windows) stops at the first failing command; the default
+        # PowerShell carries on after a failed `npm ci` and then reports a
+        # misleading "'react-scripts' is not recognized".
+        shell: bash
         run: |
           cd frontend
           npm ci
           npm test
-  
+
+      - name: npm debug log on failure
+        if: failure()
+        shell: bash
+        run: tail -n 100 "$(npm config get cache)"/_logs/*.log || true
+
   integration-tests-frontend:
     strategy:
       matrix:
