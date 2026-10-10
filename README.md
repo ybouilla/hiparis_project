@@ -51,6 +51,15 @@ docker run -d \
     webserver
 ```
 
+#### Scaled deployment (docker compose)
+
+nginx load-balances several stateless app replicas:
+```shell
+docker compose up -d --build          # 2 replicas by default
+docker compose up -d --scale app=4    # rescale live
+APP_REPLICAS=4 WEB_CONCURRENCY=2 PORT=5000 docker compose up -d
+```
+
 ### 2. Deploy without docker
 Not recommanded for production
 Run the following command from the project root directory:
@@ -81,7 +90,7 @@ Another panel called `sort` let the user orders the results, given Popularity, V
 
 2. **Movie statistics**
 
-This webpage display statistics on popularity, vote count and vote average.
+This webpage displays statistics on popularity, vote count and vote average.
 It allows users to explore whether popularity is correlated with vote count or vote average, regarding the release dates.
 Axes are normalized when 2 or more features are displayed (min-max normalization).
 

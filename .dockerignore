@@ -1,0 +1,11 @@
+.git
+.github
+.venv
+.pytest_cache
+**/__pycache__
+**/node_modules
+frontend/build
+frontend/test-results
+imgs
+report.html
+bckuppackage.json
