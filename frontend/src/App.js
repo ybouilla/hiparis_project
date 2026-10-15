@@ -5,31 +5,33 @@ import {
   Toolbar,
   Typography,
   Drawer,
-  TextField,
-  Checkbox,
-  FormControlLabel,
   Button,
   Stack,
   Chip,
-  Rating,
-  Paper,
-  Divider,
-  Slider,
-  IconButton, 
+  IconButton,
+  InputBase,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
+  useTheme,
+  useMediaQuery,
 } from "@mui/material";
 import MenuOpenIcon from "@mui/icons-material/MenuOpen";
-import Tooltip from "@mui/material/Tooltip";
 import MenuIcon from "@mui/icons-material/Menu";
-import { useTheme, useMediaQuery } from "@mui/material";
- 
+import SearchIcon from "@mui/icons-material/Search";
+import CloseIcon from "@mui/icons-material/Close";
+import ViewModuleIcon from "@mui/icons-material/ViewModule";
+import ViewListIcon from "@mui/icons-material/ViewList";
+
 import axios from 'axios';
 import qs from 'qs';
 import { Link, } from "react-router-dom";
 //import moviesData from "./movies.json";
-import MovieCard from "./MovieCard";
+import MovieCard, { MovieCardSkeleton } from "./MovieCard";
 import FilterPanel from "./FilterPanel";
 import SortPanel from "./SortPanel";
 import { handleIntersection } from "./utils/handleIntersection";
+import { languageLabel } from "./utils/languageLabel";
 
 const moviesData = [
   {
@@ -68,6 +70,8 @@ const moviesData = [
 ]
 const PAGE_SIZE = 20;
 const min_dates = 1900;
+const DRAWER_WIDTH = 280;
+const DEFAULT_YEAR_RANGE = [1900, 2026];
 export default function App() {
   const df = moviesData;
 
@@ -82,9 +86,9 @@ export default function App() {
   const [totalMovies, setTotalMovies] = useState(PAGE_SIZE);
   const [openSideBar, setOpenSideBar] = useState(true);
   const [stars, setStars] = useState(0);  // for rating
-  const [yearRange, setYearRange] = useState([1900, 2026]);
+  const [yearRange, setYearRange] = useState(DEFAULT_YEAR_RANGE);
   const [minDate, setMinDate] = useState(min_dates)
-  const [filterPanel, setFilterPanel] = useState(true);
+  const [view, setView] = useState("grid"); // "grid" | "list"
   const [sortBy, setSortBy] = React.useState("");
   const [sortingDirection, setSortingDirection] = React.useState("desc");
   const [isLoadingPage, setIsLoadingPage] = useState(false); // loadingGuard
@@ -130,11 +134,6 @@ export default function App() {
         : [...prev, genre]
     );
   };
-
-const filtered = useMemo(() => {
-    let data = [...movies];
-    return data; 
-  }, [movies, search, selectedGenres]);
 
      // Getting movies (API GET REQUEST)
   const collectMovies = async (pageNumber, signal) => {
@@ -192,6 +191,7 @@ const filtered = useMemo(() => {
     isLoadingPageRef.current = true;
     try{
       const newMovies = await collectMovies(pageNumber, signal);
+    if (signal?.aborted) return; // superseded by a newer request: leave its state alone
 
     if (!newMovies || newMovies.length === 0) {
       setHasMore(false);
@@ -210,19 +210,14 @@ const filtered = useMemo(() => {
       return updated;
     });
     }finally{
-      setIsLoadingPage(false);
-      isLoadingPageRef.current = false;
+      if (!signal?.aborted) {
+        setIsLoadingPage(false);
+        isLoadingPageRef.current = false;
+      }
     }
 }, [collectMovies]);
 
   
-
-  const totalPages = Math.max(1, Math.ceil(totalMovies / PAGE_SIZE));
-
-  const start = (page - 1) * PAGE_SIZE;
-  const pageMovies = filtered //.slice(start, start + PAGE_SIZE);
-
-
 
 // scroll down method
 /**
@@ -341,161 +336,238 @@ useEffect(() => {
     if (isMobile) setOpenSideBar(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  //UI display params
-  const sidebarRowSx = {
-    display: "flex",
-    gap: 1,
-    justifyContent: "center",
-    px: 1, 
+
+  // active filters, shown as removable chips above the results
+  const yearFilterActive = yearRange[0] > minDate || yearRange[1] < DEFAULT_YEAR_RANGE[1];
+  const activeFilters = [
+    ...(search ? [{ key: "search", label: `“${search}”`, onDelete: () => setSearch("") }] : []),
+    ...selectedGenres.map((g) => ({ key: `genre-${g}`, label: g, onDelete: () => toggleGenre(g) })),
+    ...(language ? [{ key: "lang", label: languageLabel(language), onDelete: () => setLanguage("") }] : []),
+    ...(stars > 0 ? [{ key: "stars", label: `Rating ≥ ${stars * 2}/10`, onDelete: () => setStars(0) }] : []),
+    ...(yearFilterActive
+      ? [{ key: "years", label: `${yearRange[0]}–${yearRange[1]}`, onDelete: () => setYearRange(DEFAULT_YEAR_RANGE) }]
+      : []),
+  ];
+
+  const clearAllFilters = () => {
+    setSearch("");
+    setSelectedGenres([]);
+    setLanguage("");
+    setStars(0);
+    setYearRange(DEFAULT_YEAR_RANGE);
   };
+
+  const sidebarToggleLabel = openSideBar ? "Hide filters" : "Show filters";
+
   return (
     <Box sx={{ display: "flex" }}>
 
-
       {/* Top bar */}
-      <AppBar position="fixed">
-        <Toolbar>
-          { (
+      <AppBar position="fixed" sx={{ zIndex: (t) => t.zIndex.drawer + 1 }}>
+        <Toolbar sx={{ gap: 1 }}>
+          <Tooltip title={sidebarToggleLabel}>
             <IconButton
               color="inherit"
+              edge="start"
               onClick={() => setOpenSideBar((p) => !p)}
-              size="small"
-              aria-label={openSideBar ? "Collapse sidebar" : "Expand sidebar"}
-              sx={{ mr: 1 }}
+              aria-label={sidebarToggleLabel}
             >
               {openSideBar ? <MenuOpenIcon /> : <MenuIcon />}
             </IconButton>
-          )}
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
+          </Tooltip>
+
+          <Typography variant="h6" noWrap sx={{ display: { xs: "none", sm: "block" } }}>
             🎬 Movie Explorer
           </Typography>
-          <Button color="inherit" component={Link} to="/">
-            <strong>Movie</strong>
-          </Button>
-          <Button color="inherit" component={Link} to="/statistics">
-            <strong>Movies Statistics</strong>
-          </Button>
+
+          <Box
+            sx={{
+              flex: 1,
+              maxWidth: 460,
+              mx: "auto",
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              px: 1.5,
+              borderRadius: 2,
+              bgcolor: "rgba(255,255,255,0.15)",
+              "&:focus-within": { bgcolor: "rgba(255,255,255,0.25)" },
+            }}
+          >
+            <SearchIcon fontSize="small" />
+            <InputBase
+              fullWidth
+              placeholder="Search a title…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              inputProps={{ "aria-label": "Search title" }}
+              sx={{ color: "inherit", py: 0.5 }}
+            />
+            {search && (
+              <IconButton size="small" color="inherit" aria-label="Clear search" onClick={() => setSearch("")}>
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            )}
+          </Box>
+
+          <Box sx={{ display: { xs: "none", sm: "flex" }, gap: 0.5 }}>
+            <Button color="inherit" component={Link} to="/" aria-current="page" sx={{ bgcolor: "rgba(255,255,255,0.18)" }}>
+              <strong>Movie</strong>
+            </Button>
+            <Button color="inherit" component={Link} to="/statistics">
+              <strong>Movies Statistics</strong>
+            </Button>
+          </Box>
         </Toolbar>
       </AppBar>
 
-      {/* Sidebar */}
+      {/* Sidebar: filters only. Slides away on desktop, overlays on mobile. */}
       <Drawer
-        variant={isMobile ? "temporary" : "permanent"}
-        open={isMobile ? openSideBar : true}
+        variant={isMobile ? "temporary" : "persistent"}
+        open={openSideBar}
         onClose={() => setOpenSideBar(false)}
         sx={{
-          width: openSideBar ? 280 : 72,
+          width: isMobile ? "auto" : openSideBar ? DRAWER_WIDTH : 0,
           flexShrink: 0,
-          "& .MuiDrawer-paper": {
-            width: openSideBar ? 280 : 72,
-            mt: 8,
-            height: "calc(100vh - 64px)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden", // keep this
-            transition: "width 0.3s",
-          },
+          transition: (t) => t.transitions.create("width"),
+          "& .MuiDrawer-paper": { width: DRAWER_WIDTH, maxWidth: "85vw", boxSizing: "border-box" },
         }}
       >
-      
-  <Box sx={{ p: 1, display: "flex",  flexDirection: "column", gap: .5}}>
-    
-    <Box sx={sidebarRowSx}>
-      <Button disabled={filterPanel} variant="outlined" onClick={() => setFilterPanel(true)}>
-        Filters
-      </Button>
+        <Toolbar /> {/* spacer: keeps the content below the fixed AppBar */}
 
-      <Button disabled={filterPanel===false} variant="outlined" onClick={() => setFilterPanel(false)}>
-        Sort
-      </Button>
-    </Box>
-  </Box>
-  <Box
-    sx={{
-        flex: 1,
-        minHeight: 0,
-        overflowY: "auto",
-        overflowX: "hidden",
-      }}>
-  {filterPanel === true && (
-      <FilterPanel 
-        setSearch={setSearch}
-        toggleGenre={toggleGenre}
-        selectedGenres={selectedGenres}
-        allGenres={allGenres}
-        stars={stars}
-        setStars={setStars}
-        language={language}
-        setLanguage={setLanguage}
-        minDate={minDate}
-        yearRange={yearRange}
-        setYearRange={setYearRange}
-      
-      />
-    )}
-    {filterPanel === false && (
-      <SortPanel
-      sortBy={sortBy}
-      setSortBy={setSortBy}
-      direction={sortingDirection}
-      setDirection={setSortingDirection}
-      sidebarRowSx={sidebarRowSx}
-      />
-    )}
-    </Box>
-  </Drawer>
+        <Box sx={{ px: 2, pt: 1.5, pb: 1, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <Typography variant="subtitle1" fontWeight={700}>
+            Filters
+          </Typography>
+          <Button size="small" onClick={clearAllFilters} disabled={activeFilters.length === 0}>
+            Clear all
+          </Button>
+        </Box>
 
-      
- 
+        {isMobile && (
+          <Box sx={{ px: 2, pb: 1, display: "flex", gap: 1, flexWrap: "wrap" }}>
+            <Button size="small" variant="outlined" component={Link} to="/">
+              Movie
+            </Button>
+            <Button size="small" variant="outlined" component={Link} to="/statistics">
+              Movies Statistics
+            </Button>
+          </Box>
+        )}
+
+        <FilterPanel
+          toggleGenre={toggleGenre}
+          selectedGenres={selectedGenres}
+          allGenres={allGenres}
+          stars={stars}
+          setStars={setStars}
+          language={language}
+          setLanguage={setLanguage}
+          minDate={minDate}
+          yearRange={yearRange}
+          setYearRange={setYearRange}
+        />
+
+        {isMobile && (
+          <Box sx={{ p: 2, mt: "auto" }}>
+            <Button fullWidth variant="contained" onClick={() => setOpenSideBar(false)}>
+              {`Show ${totalMovies} movies`}
+            </Button>
+          </Box>
+        )}
+      </Drawer>
+
       {/* Main content */}
-      
-      <Box
-        component="main"
-        sx={{
-          flexGrow: 1,
-          mt: 8,
-          px: { xs: "56px", sm: "64px" },
-          display: "flex",
-          justifyContent: "center",
-        }}
+      <Box component="main" sx={{ flexGrow: 1, minWidth: 0, px: { xs: 2, sm: 3 }, pb: 6 }}>
+        <Toolbar />
+        <Box sx={{ maxWidth: 1400, mx: "auto", pt: 3 }}>
 
-        >
-  <Box sx={{ width: "100%", maxWidth: 900 }}>
-    
-    {/* Header */}
-    <Box sx={{ mb: 3 }}>
-      <Typography variant="h6" fontWeight={600}>
-        Movie results
-      </Typography>
+          {/* Results toolbar: count, sort, view mode */}
+          <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1.5, mb: 1.5 }}>
+            <Typography variant="h5" component="h1" fontWeight={700}>
+              Movies
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              <strong>{totalMovies}</strong>
+              {` ${totalMovies === 1 ? "movie" : "movies"} found`}
+            </Typography>
 
-      <Typography variant="body2" color="text.secondary">
-        <strong>{totalMovies}</strong> movies found · showing{" "}
-        <strong>
-          {start + 1}:{Math.min(start + PAGE_SIZE, filtered.length)}
-        </strong>
-      </Typography>
+            <Box sx={{ flex: 1 }} />
+
+            <SortPanel
+              sortBy={sortBy}
+              setSortBy={setSortBy}
+              direction={sortingDirection}
+              setDirection={setSortingDirection}
+            />
+
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={view}
+              onChange={(_, v) => v && setView(v)}
+              aria-label="View mode"
+            >
+              <ToggleButton value="grid" aria-label="Grid view">
+                <ViewModuleIcon fontSize="small" />
+              </ToggleButton>
+              <ToggleButton value="list" aria-label="List view">
+                <ViewListIcon fontSize="small" />
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+
+          {activeFilters.length > 0 && (
+            <Stack direction="row" flexWrap="wrap" useFlexGap gap={1} sx={{ mb: 2 }}>
+              {activeFilters.map((f) => (
+                <Chip key={f.key} label={f.label} onDelete={f.onDelete} color="primary" variant="outlined" size="small" />
+              ))}
+            </Stack>
+          )}
+
+          {/* Infinite scroll trigger (up) */}
+          <div ref={topRef} style={{ height: 40, marginBottom: -24 }} />
+
+          <Box
+            sx={{
+              display: "grid",
+              gap: 2,
+              gridTemplateColumns:
+                view === "list"
+                  ? "1fr"
+                  : { xs: "repeat(auto-fill, minmax(150px, 1fr))", sm: "repeat(auto-fill, minmax(180px, 1fr))" },
+            }}
+          >
+            {(movies ?? []).map((movie, i) => (
+              <MovieCard key={i} movie={movie} view={view} />
+            ))}
+            {isLoadingPage &&
+              Array.from({ length: view === "list" ? 3 : 6 }, (_, i) => (
+                <MovieCardSkeleton key={`skeleton-${i}`} view={view} />
+              ))}
+          </Box>
+
+          {!isLoadingPage && movies.length === 0 && !hasMore && (
+            <Box sx={{ textAlign: "center", py: 8, color: "text.secondary" }}>
+              <Typography variant="h6">No movie matches these filters</Typography>
+              <Button sx={{ mt: 1 }} onClick={clearAllFilters}>
+                Clear all filters
+              </Button>
+            </Box>
+          )}
+
+          {/* Infinite scroll trigger (down) */}
+          {hasMore && movies.length > 0 && (
+            <div ref={loadMoreRef} data-testid="feed-loader" style={{ height: 40 }} />
+          )}
+
+          {!hasMore && movies.length > 0 && (
+            <Typography variant="caption" color="text.secondary" display="block" textAlign="center" sx={{ mt: 2 }}>
+              End of results
+            </Typography>
+          )}
+        </Box>
+      </Box>
     </Box>
-  
-  {/* Infinite scroll trigger */}
-  <div ref={topRef} style={{ height: 40 }} />
-   <Stack spacing={2} sx={{ mb: 3 }}>
-      {(movies ?? []).map((movie, i) => (
-        <MovieCard key={ i} movie={movie} />
-      ))}
-    </Stack>
-
-
-  {hasMore && movies.length > 0 && (
-    <div ref={loadMoreRef} data-testid="feed-loader" style={{ height: 40 }} />
-  )}
-
-{page < totalPages && (
-  <p style={{ textAlign: "center" }}>Loading more...</p>
-)}
-
-  </Box>
-</Box>
-    </Box>
-    
   );
 }
