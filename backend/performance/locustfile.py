@@ -17,7 +17,10 @@ class MovieUser(HttpUser):
         different query strings into one line in the Locust stats."""
         with self.client.get(path, params=params, name=name, catch_response=True) as response:
             if response.status_code != 201:
-                response.failure(f"Unexpected status: {response.status_code}")
+                # status 0 = no HTTP response at all; say why (timeout, reset, ...)
+                error = getattr(response, "error", None)
+                detail = f" ({type(error).__name__}: {error})" if error else ""
+                response.failure(f"Unexpected status: {response.status_code}{detail}")
                 return
 
             data = response.json()
