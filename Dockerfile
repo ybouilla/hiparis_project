@@ -33,6 +33,9 @@ COPY frontend ./frontend
 
 # copy entrypoint
 COPY entrypoint.sh ./entrypoint.sh
+
+# gunicorn settings (picked up automatically from the working directory)
+COPY gunicorn.conf.py ./gunicorn.conf.py
 RUN chmod +x /entrypoint.sh
 
 ENV PYTHONPATH=/

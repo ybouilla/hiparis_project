@@ -6,7 +6,7 @@ Vous disposez d’un fichier contenant une base de données de films (movies.csv
 
 Here is a short illustration of the rendered page.
 
-<img src="./imgs/movie_interface.gif" width="50%" height="50%"/>
+<img src="./imgs/movie_interface_pres.gif" width="50%" height="50%"/>
 
 ## Setup (not needed if docker is used - see below)
 The project requires the following dependencies:
@@ -65,6 +65,7 @@ Not recommanded for production
 Run the following command from the project root directory:
 
 ```shell
+source .venv/bin/activate
 gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
 ```
 Then open the application in your web browser: http://localhost:5000

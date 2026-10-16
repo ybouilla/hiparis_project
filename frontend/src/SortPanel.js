@@ -1,109 +1,48 @@
-import React, { useState } from "react";
-import { Box,
-   Radio,
-   RadioGroup,
-   FormControlLabel,
-   FormControl,
-   FormLabel,
-   FormGroup,
-   Checkbox,
-   Paper,
-   Switch,
-   Stack,
-   ToggleButton,
-   ToggleButtonGroup,
-  Tooltip, } from "@mui/material";
+import React from "react";
+import { Box, IconButton, MenuItem, Select, Tooltip } from "@mui/material";
 import ArrowDownwardIcon from "@mui/icons-material/ArrowDownward";
 import ArrowUpwardIcon from "@mui/icons-material/ArrowUpward";
 
-import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
-import CheckBoxIcon from "@mui/icons-material/CheckBox";
+const OPTIONS = [
+  ["", "Sort: default order"],
+  ["popularity", "Sort: popularity"],
+  ["vote_average", "Sort: rating"],
+  ["vote_count", "Sort: number of votes"],
+  ["release_date", "Sort: release date"],
+];
 
+/** Compact sort control for the results toolbar: field dropdown + direction toggle. */
+export default function SortPanel({ sortBy, setSortBy, direction, setDirection }) {
+  const desc = direction === "desc";
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+      <Select
+        size="small"
+        value={sortBy}
+        displayEmpty
+        onChange={(e) => setSortBy(e.target.value)}
+        inputProps={{ "aria-label": "Sort by" }}
+        sx={{ minWidth: 190 }}
+      >
+        {OPTIONS.map(([value, label]) => (
+          <MenuItem key={value} value={value}>
+            {label}
+          </MenuItem>
+        ))}
+      </Select>
 
-export default function SortPanel({sortBy,
-   setSortBy, direction, setDirection, sidebarRowSx}){
-  
-  const handleChange = (currVal) => { 
-    setSortBy((prev) => (prev === currVal ? "" : currVal));
-   };
-   
-return (
-   
-<Paper
-  elevation={3}
-  sx={{
-    p: 2,
-    maxWidth: 400,
-    mx: "auto",
-    borderRadius: 2,
-  }}
->
-  <FormControl>
-    <RadioGroup
-      row
-      //value={sortBy}
-      //onChange={handleChange}
-    >
-      <Tooltip title="Sort with popularity">
-      <FormControlLabel
-        value="popularity"
-        control={<Radio
-          checked={sortBy === "popularity"}
-          onClick={() => handleChange("popularity")}
-        />
-        }
-        label="Sort by Popularity 🔥"
-      />
+      <Tooltip title={desc ? "Descending (click for ascending)" : "Ascending (click for descending)"}>
+        {/* span: a disabled button can't hold a tooltip */}
+        <span>
+          <IconButton
+            onClick={() => setDirection(desc ? "asc" : "desc")}
+            disabled={!sortBy}
+            aria-label={desc ? "Sort descending" : "Sort ascending"}
+          >
+            {desc ? <ArrowDownwardIcon /> : <ArrowUpwardIcon />}
+          </IconButton>
+        </span>
       </Tooltip>
-      <FormControlLabel
-        value="vote_count"
-        control={<Radio
-          checked={sortBy === "vote_count"}
-          onClick={() => handleChange("vote_count")}
-        />}
-        label="Sort by Vote Count ⭐"
-      />
-      <FormControlLabel
-        value="vote_average"
-        control={<Radio
-          checked={sortBy === "vote_average"}
-          onClick={() => handleChange("vote_average")}
-        />}
-        label="Sort by Vote Average ⭐"
-      />
-      <FormControlLabel
-        value="release_date"
-        control={<Radio
-          checked={sortBy === "release_date"}
-          onClick={() => handleChange("release_date")}
-        />}
-        label="Sort by release date 📅"
-      />
-    </RadioGroup>
-  </FormControl>
-  <Box sx={sidebarRowSx}>
-  <ToggleButtonGroup
-    value={direction}
-    exclusive
-    onChange={(event, value) => {
-      if (value !== null) setDirection(value);
-    }}
-  >
-      <Tooltip title=" sort by ascending order">
-        <ToggleButton value="asc">
-          asc
-          <ArrowUpwardIcon />
-        </ToggleButton>
-        
-      </Tooltip>
-      <Tooltip title="sort by descending order">
-        <ToggleButton value="desc">
-          <ArrowDownwardIcon />
-          desc
-        </ToggleButton>
-      </Tooltip>
-    </ToggleButtonGroup>
     </Box>
-</Paper>
   );
 }
