@@ -208,7 +208,17 @@ jobs:
           sleep 10
           test "$(docker compose ps -q app | wc -l)" -eq 4
 
+      - name: nginx caches repeated API requests
+        run: |
+          url="http://localhost:5000/statistics?dates=1990&dates=2020"
+          status() { curl -s -D - -o /dev/null "$@" | tr -d '\r' | grep -i '^x-cache-status' | awk '{print $2}'; }
+          first=$(status "$url"); second=$(status "$url"); bypass=$(status -H 'X-No-Cache: 1' "$url")
+          echo "first=$first second=$second with X-No-Cache=$bypass"
+          test "$first" = "MISS"; test "$second" = "HIT"; test "$bypass" = "BYPASS"
+
       - name: Load test through nginx
+        env:
+          NO_CACHE: 1   # every request must reach a replica, so the per-replica check below is meaningful
         run: |
           uv venv --python 3.12
           source .venv/bin/activate
@@ -356,6 +366,8 @@ jobs:
         run: curl -fsS --retry 30 --retry-delay 3 --retry-all-errors -o /dev/null "$TUNNEL_URL/"
 
       - name: Load test through the quick tunnel
+        env:
+          NO_CACHE: 1   # bypass nginx's cache so every replica gets requests
         run: |
           uv venv --python 3.12
           source .venv/bin/activate
