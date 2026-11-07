@@ -60,6 +60,22 @@ docker compose up -d --scale app=4    # rescale live
 APP_REPLICAS=4 WEB_CONCURRENCY=2 PORT=5000 docker compose up -d
 ```
 
+#### Cloudflare (optional)
+
+Cloudflare can sit in front of nginx to give you HTTPS, DDoS/WAF protection and edge caching, without opening any inbound port. The stack then looks like: `Cloudflare -> cloudflared tunnel -> nginx -> app replicas`.
+
+- **Tunnel**: the `cloudflared` service is in the `cloudflare` compose profile, so a plain `docker compose up` ignores it.
+  1. In Cloudflare Zero Trust, go to *Networks > Tunnels*, create a tunnel and copy its token.
+  2. In the tunnel, add a public hostname (a domain on your Cloudflare account) with the service set to `http://nginx:80`.
+  3. Put the token in a `.env` file (see `.env.example`, `.env` is git-ignored) and start the stack:
+     ```shell
+     CLOUDFLARE_TUNNEL_TOKEN=<token> docker compose --profile cloudflare up -d
+     ```
+- **Caching**: nginx sets the `Cache-Control` headers (`nginx/nginx.conf`): `/static/*` is cached for a year (the React build hashes file names), `/allmovies` and `/statistics` get `s-maxage=60`, everything else (including `index.html`) is `no-cache`. Cloudflare does not cache JSON by default: to cache the two API routes, add a *Cache Rule* (*Caching > Cache Rules*) for them with "Eligible for cache" and edge TTL "Use cache-control header if present".
+- **Origin still reachable**: port `5000` stays published on the host, so the app can be reached without going through Cloudflare. Once the tunnel works, bind it to localhost (`127.0.0.1:${PORT:-5000}:80` in the `nginx` service) or remove the published port.
+- **Client IPs**: behind the tunnel, the client address is in the `CF-Connecting-IP` header (nginx currently sees the `cloudflared` container).
+- **No account or domain?** `cloudflared tunnel --url http://localhost:5000` opens a temporary `https://<random>.trycloudflare.com` URL (no caching or WAF rules, for testing only).
+
 ### 2. Deploy without docker
 Not recommanded for production
 Run the following command from the project root directory:
@@ -192,6 +208,11 @@ docker logs webserver # display test logs
 
 Tests are re-used when running CI:
 for more details, please see `.github/workflow/build_test` file.
+
+Besides the unit/integration tests, the workflow has load-test jobs (Locust, see `backend/performance/locustfile.py`):
+- `scalability-test`: starts the compose stack with 2 replicas, scales it to 4, load-tests through nginx and checks every replica served requests.
+- `cloudflare-quick-tunnel-test`: same test through a temporary `trycloudflare.com` tunnel (no secret needed).
+- `cloudflare-test`: same test through your own tunnel and domain. It is skipped unless the repository has a `CLOUDFLARE_TUNNEL_TOKEN` secret and a `CLOUDFLARE_URL` variable (e.g. `https://movies.example.com`).
  
 ## Possible improvements:
 
