@@ -89,16 +89,23 @@ If it does not work, try to open it from an incognito browser window
 
 ## Data warehouse (PostgreSQL, star schema)
 
-`movies.csv` can be loaded into PostgreSQL as a star schema by a Python pipeline (`etl/`). This is optional: the web app still reads the CSV directly.
+`movies.csv` can be loaded into PostgreSQL as a star schema. This is optional: the web app still reads the CSV directly.
+
+It is an ELT pipeline: Python extracts the CSV and loads it as-is into a `raw` table, then [dbt](https://www.getdbt.com/) transforms it into the star schema (SQL models, database constraints and tests).
 
 ```shell
 docker compose --profile db up -d db       # PostgreSQL 17, data kept in the `pgdata` volume
-docker compose --profile db run --rm etl   # load movies.csv (takes a few seconds, safe to re-run)
+docker compose --profile db run --rm etl   # load raw.movies, then dbt build (a few seconds, safe to re-run)
 psql postgresql://movies:movies@localhost:5432/movies   # user / password / database: see .env.example
 ```
-Without docker: `DATABASE_URL=postgresql://user:pwd@host:5432/db python -m etl.load_movies` (`--dry-run` only checks the transformation, `--recreate` drops and recreates the tables first, e.g. after a schema change).
+Without docker:
+```shell
+pip install -r etl/requirements.txt       # pandas, psycopg, dbt-postgres
+sh etl/run.sh                             # = python -m etl.load_raw  then  dbt build --project-dir dbt --profiles-dir dbt
+```
+The connection comes from `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` (defaults: `localhost`, `5432`, and `movies` for the last three). Arguments of `etl/run.sh` go to the loader: `--dry-run` only parses the CSV, `--recreate` drops and recreates `raw.movies`.
 
-### Model (`etl/schema.sql`)
+### Model (`dbt/models/marts/`)
 
 One row per movie in the fact table. Genre is multi-valued, so it goes through a bridge table.
 
@@ -121,12 +128,18 @@ One row per movie in the fact table. Genre is multi-valued, so it goes through a
 
 Key `0` is the "unknown" member of `dim_date`, `dim_language` and `dim_genre`, so foreign keys are never `NULL`. Don't sum a measure across genres: a movie with 3 genres has 3 rows in the bridge (count movies per genre instead).
 
-### Pipeline (`etl/load_movies.py`)
+### Pipeline
 
-1. **Extract**: `backend/load_csv.py` (it also repairs the multi-line rows of the CSV).
-2. **Transform**: plain pandas, no database needed: surrogate keys, date attributes, de-duplicated genres, unknown members.
-3. **Validate**: unique keys and no orphan foreign keys, before touching the database.
-4. **Load**: one transaction that empties and refills every table (`COPY`), then checks the row counts. Readers never see a half-loaded warehouse, and a failed run leaves the previous data in place.
+```
+movies.csv --python (etl/load_raw.py)--> raw.movies --dbt--> stg_* views --> dim_*, fact_movie, bridge tables --> vw_movies
+```
+
+1. **Extract + Load** (`etl/load_raw.py`): `backend/load_csv.py` parses the CSV (it also repairs the multi-line rows), then one transaction empties and refills `raw.movies` (`COPY`) and checks the row count. A failed run leaves the previous data in place. This step stays in Python because dbt seeds are meant for small reference files (the CSV has broken rows), and a platform like Airbyte would be far too heavy for one static file.
+2. **Transform** (`dbt/`): `stg_movies` and `stg_movie_genres` (views: cleaning, splitting the genre list), then the marts (tables). The language names come from the `language_names` seed.
+3. **Constraints**: every mart has an enforced dbt contract, so dbt checks the column types and creates the primary keys, foreign keys and `CHECK`s in the database. A violation makes the model fail, and the previous table stays in place.
+4. **Tests** (`dbt build` runs seeds, models and tests in dependency order; a failing test skips what depends on it): not-null / unique on the raw data, one fact row per raw movie, every movie has a genre, plausible release dates, valid weekdays, and a warning for language codes without a name.
+
+A model is replaced before its own tests run. So when a *test* fails (not a constraint), that table already holds the new data while the tables downstream keep the previous one. To inspect the lineage: `dbt docs generate` then `dbt docs serve` (with `--project-dir dbt --profiles-dir dbt`).
 
 Examples:
 ```sql
@@ -143,7 +156,7 @@ FROM fact_movie f JOIN dim_date d ON d.date_key = f.date_key
 GROUP BY d.decade ORDER BY d.decade;
 ```
 
-Tests: `pytest backend/tests/test_etl.py` (the load test runs only if `TEST_DATABASE_URL` points to a PostgreSQL database that may be overwritten). CI job: `etl-test`.
+Tests: the dbt tests run as part of `dbt build`; the loader has `pytest etl/tests` (its database test runs only if `TEST_DATABASE_URL` points to a PostgreSQL database that may be overwritten). CI job `etl-test` runs both against a PostgreSQL container, running the pipeline twice.
 
 
 ## Example of usage:

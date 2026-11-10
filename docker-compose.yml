@@ -8,7 +8,7 @@
 #
 # Optional PostgreSQL warehouse (profile "db"), not used by the web app yet:
 #   docker compose --profile db up -d db       # start the database
-#   docker compose --profile db run --rm etl   # load movies.csv into it (star schema, see etl/)
+#   docker compose --profile db run --rm etl   # load movies.csv, then build the star schema with dbt
 
 services:
   app:
@@ -89,14 +89,21 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # One-shot pipeline: movies.csv -> PostgreSQL. Safe to re-run (full refresh in one transaction).
+  # One-shot pipeline, safe to re-run:
+  #   1. python loads movies.csv into raw.movies (one transaction)
+  #   2. dbt builds and tests the star schema from it (etl/run.sh)
+  # Own image (etl/Dockerfile): dbt does not belong in the web app image.
   etl:
-    build: .
-    image: movie-explorer:latest
+    build:
+      context: .
+      dockerfile: etl/Dockerfile
+    image: movie-explorer-etl:latest
     profiles: ["db"]
     environment:
-      MODE: etl
-      DATABASE_URL: postgresql://${POSTGRES_USER:-movies}:${POSTGRES_PASSWORD:-movies}@db:5432/${POSTGRES_DB:-movies}
+      POSTGRES_HOST: db
+      POSTGRES_USER: ${POSTGRES_USER:-movies}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-movies}
+      POSTGRES_DB: ${POSTGRES_DB:-movies}
     depends_on:
       db:
         condition: service_healthy

@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    description: >
+      Landing zone filled by `python -m etl.load_raw`: the rows of movies.csv, after the
+      loader repaired the CSV's multi-line records, plus a technical `movie_id`.
+    tables:
+      - name: movies
+        columns:
+          - name: movie_id
+            description: Position of the movie in the CSV (1-based), assigned by the loader.
+            data_tests: [unique, not_null]
+          - name: title
+            data_tests: [not_null]

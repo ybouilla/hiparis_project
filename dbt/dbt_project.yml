@@ -1,0 +1,23 @@
+name: movies_dw
+version: "1.0.0"
+config-version: 2
+profile: movies_dw
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  movies_dw:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
+
+seeds:
+  movies_dw:
+    +column_types:
+      language_code: text
+      language_name: text
