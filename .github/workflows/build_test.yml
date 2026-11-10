@@ -389,3 +389,50 @@ jobs:
         run: |
           docker rm -f cf-quick || true
           docker compose down -v
+
+  podman-test:
+    # The same stack with rootless Podman + podman-compose: checks that it starts, serves the
+    # API through nginx and that the containers really run unprivileged.
+    # continue-on-error: this job has not run on a real runner yet (rootless Podman depends on
+    # the runner's user namespaces and DNS plugin). Remove the line once it is green.
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install podman-compose
+        run: pipx install podman-compose==1.6.0
+
+      - name: Podman is rootless
+        run: |
+          podman --version
+          test "$(podman info --format '{{.Host.Security.Rootless}}')" = "true"
+
+      - name: Build and start the stack (2 replicas)
+        run: podman-compose up -d --build
+
+      - name: Wait for the app through nginx
+        run: curl -fsS --retry 30 --retry-delay 2 --retry-all-errors -o /dev/null http://localhost:5000/
+
+      - name: API answers and containers are unprivileged
+        run: |
+          curl -fsS "http://localhost:5000/allmovies?start=0&end=1" | grep -q '"movies"'
+          curl -fsS "http://localhost:5000/statistics" | grep -q 'stats_genre'
+          test "$(podman ps --filter label=io.podman.compose.service=app -q | wc -l)" -eq 2
+          for service in app nginx; do
+            for container in $(podman ps --filter "label=io.podman.compose.service=$service" --format '{{.Names}}'); do
+              uid=$(podman exec "$container" id -u)
+              echo "$service ($container) runs as uid $uid"
+              test "$uid" != "0"
+            done
+          done
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          podman ps -a
+          podman-compose logs --tail=60
+
+      - name: Clean up
+        if: always()
+        run: podman-compose down -v

@@ -36,7 +36,7 @@ npm run build
 
 ### 1. Deploy with Docker (recommanded)
 
-For docker installation, please visit [docker website](https://docs.docker.com/engine/install/) 
+For docker installation, please visit [docker website](https://docs.docker.com/engine/install/). Podman works too (rootless, more secure): see "Podman" below.
 
 From the root folder, enter in your terminal: 
 ```shell
@@ -60,19 +60,59 @@ docker compose up -d --scale app=4    # rescale live
 APP_REPLICAS=4 WEB_CONCURRENCY=2 PORT=5000 docker compose up -d
 ```
 
+#### Security hardening
+
+The containers are locked down (`docker-compose.yml`, `Dockerfile`):
+
+| Measure | Where |
+|---|---|
+| Runs as a non-root user (uid 10001 for the app; the `nginx-unprivileged` image, uid 101, listening on port 8080) | `app`, `nginx` |
+| All Linux capabilities dropped (`cap_drop: ALL`) and `no-new-privileges` | every service |
+| Read-only root filesystem; only small `tmpfs` mounts (`/tmp`, nginx's generated config) are writable | `app`, `nginx` |
+| Memory limit and a cap on the number of processes | `app`, `nginx` |
+| Fully qualified image names (`docker.io/...`), so the registry is never guessed | all images |
+
+#### Podman (rootless)
+
+[Podman](https://podman.io/) runs the same containers without a daemon and without root: it is more secure than Docker's default setup, because there is no privileged daemon socket and "root" inside a container is only your own unprivileged user on the host. `docker-compose.yml` works unchanged with `podman-compose`.
+
+```shell
+# install: e.g. `sudo apt install podman` or `sudo dnf install podman`, then
+pipx install podman-compose              # or: pip install --user podman-compose
+
+podman-compose up -d --build             # 2 replicas by default, http://localhost:5000
+podman-compose up -d --scale app=4       # rescale live
+podman-compose down
+
+# without compose (a single container, no load balancer)
+podman build -t webserver .
+podman run --rm -e MODE=serve -p 5000:5000 webserver
+```
+(`podman compose` without the dash also works: it calls whichever compose tool is installed.) On macOS and Windows, first run `podman machine init && podman machine start`.
+
+Things that differ from Docker:
+- **Ports below 1024 cannot be published** without root, which is why nginx listens on 8080 (published as 5000).
+- **Service names**: Podman's DNS is not at Docker's `127.0.0.11`. nginx therefore reads the DNS server from the container's `/etc/resolv.conf` when it starts (`nginx/nginx.conf` is a template), so the same file works on both.
+- **No CPU limit** is set: a rootless Podman refuses to start a container with `cpus` unless the `cpu` cgroup controller is delegated to your user (`systemctl edit user@.service` with `Delegate=cpu cpuset io memory pids`). After that you can add `cpus: "1.0"` under `deploy.resources.limits`.
+- **SELinux** hosts (Fedora, RHEL): the bind-mounted nginx file is relabelled with `:z`, already in the compose file.
+- **Starting at boot**: `restart: unless-stopped` does not survive a reboot of a rootless setup. Run `loginctl enable-linger $USER`, then `podman-compose systemd -a create-unit` (or use Quadlet).
+- **Health checks** (`podman ps` shows them) run from systemd timers: without systemd (e.g. WSL without systemd enabled) they stay at "starting", and `podman-compose up --wait` would wait forever. That is why nginx only waits for the app to be *started*.
+
+CI job `podman-test` starts the stack with rootless Podman and checks that the containers run as non-root.
+
 #### Cloudflare (optional)
 
 Cloudflare can sit in front of nginx to give you HTTPS, DDoS/WAF protection and edge caching, without opening any inbound port. The stack then looks like: `Cloudflare -> cloudflared tunnel -> nginx -> app replicas`.
 
 - **Tunnel**: the `cloudflared` service is in the `cloudflare` compose profile, so a plain `docker compose up` ignores it.
   1. In Cloudflare Zero Trust, go to *Networks > Tunnels*, create a tunnel and copy its token.
-  2. In the tunnel, add a public hostname (a domain on your Cloudflare account) with the service set to `http://nginx:80`.
+  2. In the tunnel, add a public hostname (a domain on your Cloudflare account) with the service set to `http://nginx:8080`.
   3. Put the token in a `.env` file (see `.env.example`, `.env` is git-ignored) and start the stack:
      ```shell
      CLOUDFLARE_TUNNEL_TOKEN=<token> docker compose --profile cloudflare up -d
      ```
 - **Caching**: nginx sets the `Cache-Control` headers (`nginx/nginx.conf`): `/static/*` is cached for a year (the React build hashes file names), `/allmovies` and `/statistics` get `s-maxage=60`, everything else (including `index.html`) is `no-cache`. Cloudflare does not cache JSON by default: to cache the two API routes, add a *Cache Rule* (*Caching > Cache Rules*) for them with "Eligible for cache" and edge TTL "Use cache-control header if present".
-- **Origin still reachable**: port `5000` stays published on the host, so the app can be reached without going through Cloudflare. Once the tunnel works, bind it to localhost (`127.0.0.1:${PORT:-5000}:80` in the `nginx` service) or remove the published port.
+- **Origin still reachable**: port `5000` stays published on the host, so the app can be reached without going through Cloudflare. Once the tunnel works, bind it to localhost (`127.0.0.1:${PORT:-5000}:8080` in the `nginx` service) or remove the published port.
 - **Client IPs**: behind the tunnel, the client address is in the `CF-Connecting-IP` header (nginx currently sees the `cloudflared` container).
 - **No account or domain?** `cloudflared tunnel --url http://localhost:5000` opens a temporary `https://<random>.trycloudflare.com` URL (no caching or WAF rules, for testing only).
 
