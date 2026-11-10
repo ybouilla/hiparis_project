@@ -17,6 +17,11 @@ case "$MODE" in
     exec npx playwright test
     ;;
       
+  etl)
+    echo "Loading movies.csv into PostgreSQL..."
+    exec python -m etl.load_movies
+    ;;
+
   serve)
     echo "Running server..."
     exec gunicorn --bind 0.0.0.0:5000 backend.wsgi:app

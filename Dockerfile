@@ -28,6 +28,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend
 COPY backend/ ./backend
 
+# CSV -> PostgreSQL pipeline (MODE=etl)
+COPY etl/ ./etl
+
 # copy frontend
 COPY frontend ./frontend
 

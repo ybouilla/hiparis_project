@@ -389,3 +389,49 @@ jobs:
         run: |
           docker rm -f cf-quick || true
           docker compose down -v
+
+  etl-test:
+    # CSV -> PostgreSQL star schema, against a real PostgreSQL service container.
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: movies
+          POSTGRES_PASSWORD: movies
+          POSTGRES_DB: movies
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U movies -d movies"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.28"
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+
+      - name: Pipeline tests (transform, validation, repeatable load)
+        env:
+          TEST_DATABASE_URL: postgresql://movies:movies@localhost:5432/movies
+        run: uv run -m pytest backend/tests/test_etl.py -v
+
+      - name: Run the pipeline, then query the warehouse
+        env:
+          DATABASE_URL: postgresql://movies:movies@localhost:5432/movies
+        run: |
+          uv run python -m etl.load_movies
+          test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM vw_movies')" -gt 9000
+          psql "$DATABASE_URL" -c "SELECT g.genre_name, count(*) AS movies FROM bridge_movie_genre b JOIN dim_genre g USING (genre_key) GROUP BY 1 ORDER BY 2 DESC LIMIT 3"

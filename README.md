@@ -87,6 +87,64 @@ gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
 Then open the application in your web browser: http://localhost:5000
 If it does not work, try to open it from an incognito browser window
 
+## Data warehouse (PostgreSQL, star schema)
+
+`movies.csv` can be loaded into PostgreSQL as a star schema by a Python pipeline (`etl/`). This is optional: the web app still reads the CSV directly.
+
+```shell
+docker compose --profile db up -d db       # PostgreSQL 17, data kept in the `pgdata` volume
+docker compose --profile db run --rm etl   # load movies.csv (takes a few seconds, safe to re-run)
+psql postgresql://movies:movies@localhost:5432/movies   # user / password / database: see .env.example
+```
+Without docker: `DATABASE_URL=postgresql://user:pwd@host:5432/db python -m etl.load_movies` (`--dry-run` only checks the transformation, `--recreate` drops and recreates the tables first, e.g. after a schema change).
+
+### Model (`etl/schema.sql`)
+
+One row per movie in the fact table. Genre is multi-valued, so it goes through a bridge table.
+
+```
+                     dim_date
+                        |
+  dim_movie ---- fact_movie ---- dim_language
+                        |
+              bridge_movie_genre ---- dim_genre
+```
+
+| Table | Content |
+|---|---|
+| `fact_movie` | measures `popularity`, `vote_count`, `vote_average`; keys to the dimensions |
+| `dim_date` | release date: year, quarter, month, day, weekday, decade |
+| `dim_language` | language code and English name |
+| `dim_genre`, `bridge_movie_genre` | the 19 genres and the movie-genre links (a movie has 1 to n genres) |
+| `dim_movie` | title, overview, poster URL (kept out of the fact table so that scans over the measures stay narrow) |
+| `vw_movies` | view with the same columns as the CSV, one row per movie |
+
+Key `0` is the "unknown" member of `dim_date`, `dim_language` and `dim_genre`, so foreign keys are never `NULL`. Don't sum a measure across genres: a movie with 3 genres has 3 rows in the bridge (count movies per genre instead).
+
+### Pipeline (`etl/load_movies.py`)
+
+1. **Extract**: `backend/load_csv.py` (it also repairs the multi-line rows of the CSV).
+2. **Transform**: plain pandas, no database needed: surrogate keys, date attributes, de-duplicated genres, unknown members.
+3. **Validate**: unique keys and no orphan foreign keys, before touching the database.
+4. **Load**: one transaction that empties and refills every table (`COPY`), then checks the row counts. Readers never see a half-loaded warehouse, and a failed run leaves the previous data in place.
+
+Examples:
+```sql
+-- movies and average rating per genre
+SELECT g.genre_name, count(*) AS movies, round(avg(f.vote_average), 2) AS avg_rating
+FROM bridge_movie_genre b
+JOIN dim_genre g ON g.genre_key = b.genre_key
+JOIN fact_movie f ON f.movie_key = b.movie_key
+GROUP BY g.genre_name ORDER BY movies DESC;
+
+-- movies per decade
+SELECT d.decade, count(*) AS movies, round(avg(f.vote_average), 2) AS avg_rating
+FROM fact_movie f JOIN dim_date d ON d.date_key = f.date_key
+GROUP BY d.decade ORDER BY d.decade;
+```
+
+Tests: `pytest backend/tests/test_etl.py` (the load test runs only if `TEST_DATABASE_URL` points to a PostgreSQL database that may be overwritten). CI job: `etl-test`.
+
 
 ## Example of usage:
 
