@@ -1,0 +1,13 @@
+# Connection settings come from the environment (same variables as the `db` compose service).
+movies_dw:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | as_number }}"
+      user: "{{ env_var('POSTGRES_USER', 'movies') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'movies') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'movies') }}"
+      schema: public
+      threads: 4

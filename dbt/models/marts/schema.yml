@@ -1,0 +1,160 @@
+version: 2
+
+# Star schema. Grain of fact_movie: one row per movie.
+#
+#                      dim_date
+#                         |
+#   dim_movie ---- fact_movie ---- dim_language
+#                         |
+#               bridge_movie_genre ---- dim_genre
+#
+# Every model has an enforced contract: dbt checks the column names and types below and
+# creates the primary keys, foreign keys and checks in the database itself.
+# Key 0 is the "unknown" member of dim_date / dim_language / dim_genre.
+
+models:
+  - name: dim_date
+    description: One row per release date present in the data, plus the unknown member.
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: date_key
+        description: yyyymmdd as an integer; 0 = unknown.
+        data_type: integer
+        constraints: [{type: primary_key}]
+      - name: full_date
+        data_type: date
+      - name: year
+        data_type: smallint
+      - name: quarter
+        data_type: smallint
+      - name: month
+        data_type: smallint
+      - name: month_name
+        data_type: text
+      - name: day
+        data_type: smallint
+      - name: day_of_week
+        description: ISO day of the week, 1 = Monday ... 7 = Sunday.
+        data_type: smallint
+        data_tests:
+          - accepted_values:
+              arguments: {values: [1, 2, 3, 4, 5, 6, 7]}
+      - name: day_name
+        data_type: text
+      - name: decade
+        description: 1990 for 1990-1999.
+        data_type: smallint
+
+  - name: dim_language
+    description: One row per original language, plus the unknown member.
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: language_key
+        data_type: smallint
+        constraints: [{type: primary_key}]
+      - name: language_code
+        description: As in the CSV ("en", "ja", ...).
+        data_type: text
+        constraints: [{type: not_null}, {type: unique}]
+      - name: language_name
+        description: English name (seed language_names.csv); the code itself if the seed has no entry.
+        data_type: text
+        constraints: [{type: not_null}]
+
+  - name: dim_genre
+    description: One row per genre, plus the unknown member.
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: genre_key
+        data_type: smallint
+        constraints: [{type: primary_key}]
+      - name: genre_name
+        data_type: text
+        constraints: [{type: not_null}, {type: unique}]
+
+  - name: dim_movie
+    description: Title, overview and poster of each movie (kept out of the fact table).
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: movie_key
+        data_type: integer
+        constraints: [{type: primary_key}]
+      - name: title
+        data_type: text
+        constraints: [{type: not_null}]
+      - name: overview
+        data_type: text
+      - name: poster_url
+        data_type: text
+
+  - name: fact_movie
+    description: One row per movie, with its measures.
+    config:
+      contract: {enforced: true}
+      indexes:
+        - columns: [date_key]
+        - columns: [language_key]
+    columns:
+      - name: movie_key
+        data_type: integer
+        constraints:
+          - type: primary_key
+          - type: foreign_key
+            to: ref('dim_movie')
+            to_columns: [movie_key]
+      - name: date_key
+        data_type: integer
+        constraints:
+          - type: not_null
+          - type: foreign_key
+            to: ref('dim_date')
+            to_columns: [date_key]
+      - name: language_key
+        data_type: smallint
+        constraints:
+          - type: not_null
+          - type: foreign_key
+            to: ref('dim_language')
+            to_columns: [language_key]
+      - name: popularity
+        data_type: numeric(10,3)
+      - name: vote_count
+        data_type: integer
+        constraints: [{type: check, expression: "vote_count >= 0"}]
+      - name: vote_average
+        data_type: numeric(3,1)
+        constraints: [{type: check, expression: "vote_average between 0 and 10"}]
+
+  - name: bridge_movie_genre
+    description: >
+      Links a movie to its genres (1..n). Do not sum a measure across genres: a movie with
+      3 genres has 3 rows here. Count movies per genre instead.
+    config:
+      contract: {enforced: true}
+      indexes:
+        - columns: [genre_key]
+    constraints:
+      - type: primary_key
+        columns: [movie_key, genre_key]
+    columns:
+      - name: movie_key
+        data_type: integer
+        constraints:
+          - type: not_null
+          - type: foreign_key
+            to: ref('fact_movie')
+            to_columns: [movie_key]
+      - name: genre_key
+        data_type: smallint
+        constraints:
+          - type: not_null
+          - type: foreign_key
+            to: ref('dim_genre')
+            to_columns: [genre_key]
+
+  - name: vw_movies
+    description: Flat view, one row per movie, same columns as the original CSV.

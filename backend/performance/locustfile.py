@@ -1,3 +1,4 @@
+import os
 import random
 
 from locust import HttpUser, task, between
@@ -9,8 +10,17 @@ TITLES = ["the", "man", "love", "war", "night"]
 SORT_FIELDS = ["popularity", "release_date", "vote_count", "vote_average"]
 
 
+# NO_CACHE=1 sends "X-No-Cache: 1": nginx then skips its response cache, so every request
+# reaches an app replica (use it to load-test the replicas rather than the cache).
+NO_CACHE = os.environ.get("NO_CACHE") == "1"
+
+
 class MovieUser(HttpUser):
     wait_time = between(1, 2)
+
+    def on_start(self):
+        if NO_CACHE:
+            self.client.headers["X-No-Cache"] = "1"
 
     def _get(self, path, name, expected_key, params=None):
         """GET and check status 201 + expected key. `name` groups URLs with
