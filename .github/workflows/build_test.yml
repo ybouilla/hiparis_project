@@ -458,3 +458,41 @@ jobs:
           test "$(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM vw_movies')" -gt 9000
           test "$(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND connamespace = 'public'::regnamespace")" -eq 5
           psql "$DATABASE_URL" -c "SELECT g.genre_name, count(*) AS movies FROM bridge_movie_genre b JOIN dim_genre g USING (genre_key) GROUP BY 1 ORDER BY 2 DESC LIMIT 3"
+
+  local-db-test:
+    # The Docker-free setup: scripts/localdb.sh starts a private PostgreSQL (the server programs
+    # that come preinstalled on the runner), then the normal pipeline runs against it.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.28"
+
+      - name: Install dependencies (python loader + dbt)
+        run: |
+          uv venv
+          uv pip install -r etl/requirements.txt
+
+      - name: Start the local database
+        run: |
+          scripts/localdb.sh start
+          scripts/localdb.sh status
+
+      - name: Run the pipeline against it
+        env:
+          POSTGRES_HOST: 127.0.0.1
+          DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+        run: uv run sh etl/run.sh
+
+      - name: Query the warehouse
+        run: test "$(scripts/localdb.sh psql -Atc 'SELECT count(*) FROM vw_movies')" -gt 9000
+
+      - name: Stop the local database
+        if: always()
+        run: scripts/localdb.sh stop

@@ -2,3 +2,4 @@
 dbt/target/
 dbt/logs/
 dbt/dbt_packages/
+.localdb/

@@ -114,11 +114,18 @@ docker compose --profile db up -d db       # PostgreSQL 17, data kept in the `pg
 docker compose --profile db run --rm etl   # load raw.movies, then dbt build (a few seconds, safe to re-run)
 psql postgresql://movies:movies@localhost:5432/movies   # user / password / database: see .env.example
 ```
-Without docker:
+Without docker (a PostgreSQL of your own, in the project folder):
 ```shell
-pip install -r etl/requirements.txt       # pandas, psycopg, dbt-postgres
+# once: the PostgreSQL *server* programs must be installed (no need to start any service)
+#   Debian / Ubuntu / WSL:  sudo apt install postgresql        macOS:  brew install postgresql@17
+scripts/localdb.sh start                  # creates ./.localdb on the first run, then starts the server
+uv pip install -r etl/requirements.txt       # pandas, psycopg, dbt-postgres (in a virtual environment)
 sh etl/run.sh                             # = python -m etl.load_raw  then  dbt build --project-dir dbt --profiles-dir dbt
+scripts/localdb.sh psql                   # SQL shell on the result
+scripts/localdb.sh stop                   # the data stays in ./.localdb until `scripts/localdb.sh reset`
 ```
+`scripts/localdb.sh` needs no Docker, no root and no system service: it runs its own server, listening on `127.0.0.1` only, with the same default user, password and database as the compose setup (`url` prints the connection string, `status` tells whether it runs). If port 5432 is taken (Ubuntu starts a system PostgreSQL after `apt install postgresql`), use another one for both commands: `export POSTGRES_PORT=5433`. Any PostgreSQL you already run works as well: point the `POSTGRES_*` variables below to it and skip the script.
+
 The connection comes from `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` (defaults: `localhost`, `5432`, and `movies` for the last three). Arguments of `etl/run.sh` go to the loader: `--dry-run` only parses the CSV, `--recreate` drops and recreates `raw.movies`.
 
 ### Model (`dbt/models/marts/`)
