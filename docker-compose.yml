@@ -9,7 +9,8 @@
 # Open http://localhost:5000 (PORT to change it).
 #
 # Hardening of every service: non-root user, all Linux capabilities dropped, no-new-privileges.
-# app and nginx also get a read-only root filesystem; only the tmpfs mounts are writable.
+# app, nginx and db also get a read-only root filesystem; only the tmpfs mounts (and db's
+# data volume) are writable. Optional parts: --profile cloudflare, --profile db.
 # Optional PostgreSQL warehouse (profile "db"), not used by the web app yet:
 #   docker compose --profile db up -d db       # start the database
 #   docker compose --profile db run --rm etl   # load movies.csv, then build the star schema with dbt
@@ -77,6 +78,9 @@ services:
     tmpfs:
       - /tmp:size=64m                 # pid file and temporary files
       - /etc/nginx/conf.d:size=1m,mode=1777   # where the rendered template is written
+      # the response cache (proxy_cache_path in nginx.conf, max_size=100m): kept in memory, so
+      # it is empty after a restart; the size must stay above max_size
+      - /var/cache/nginx:size=128m,mode=1777
     cap_drop:
       - ALL
     security_opt:
@@ -108,11 +112,15 @@ services:
       - nginx
     restart: unless-stopped
 
-  # Optional: PostgreSQL holding the movies as a star schema (etl/schema.sql).
+  # Optional: PostgreSQL holding the movies as a star schema (built by dbt, see dbt/).
   # Published on localhost only: it can be inspected with psql but not reached from outside.
   db:
-    image: postgres:17-alpine
+    image: docker.io/library/postgres:17-alpine
     profiles: ["db"]
+    # Runs as the image's own unprivileged "postgres" user (uid 70 in the alpine image) instead of
+    # starting as root and dropping privileges. If you already have a `pgdata` volume created by an
+    # older setup it is owned by that same user, so nothing to change.
+    user: "70:70"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-movies}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-movies}   # change it (.env) for anything but local use
@@ -121,6 +129,15 @@ services:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+      - /var/run/postgresql:size=1m,mode=1777   # unix socket and pid file
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512                   # one process per connection, plus a few background ones
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -143,9 +160,15 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-movies}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-movies}
       POSTGRES_DB: ${POSTGRES_DB:-movies}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    # Waits for the db container to be started, not healthy (health-based ordering needs systemd
+    # timers under rootless Podman): the loader retries its connection for about a minute.
     depends_on:
-      db:
-        condition: service_healthy
+      - db
     restart: "no"
 
 volumes:
