@@ -5,6 +5,10 @@
 #   APP_REPLICAS=4 WEB_CONCURRENCY=2 docker compose up -d
 #
 # Open http://localhost:5000 (PORT to change it).
+#
+# Optional PostgreSQL warehouse (profile "db"), not used by the web app yet:
+#   docker compose --profile db up -d db       # start the database
+#   docker compose --profile db run --rm etl   # load movies.csv, then build the star schema with dbt
 
 services:
   app:
@@ -64,3 +68,46 @@ services:
     depends_on:
       - nginx
     restart: unless-stopped
+
+  # Optional: PostgreSQL holding the movies as a star schema (etl/schema.sql).
+  # Published on localhost only: it can be inspected with psql but not reached from outside.
+  db:
+    image: postgres:17-alpine
+    profiles: ["db"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-movies}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-movies}   # change it (.env) for anything but local use
+      POSTGRES_DB: ${POSTGRES_DB:-movies}
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # One-shot pipeline, safe to re-run:
+  #   1. python loads movies.csv into raw.movies (one transaction)
+  #   2. dbt builds and tests the star schema from it (etl/run.sh)
+  # Own image (etl/Dockerfile): dbt does not belong in the web app image.
+  etl:
+    build:
+      context: .
+      dockerfile: etl/Dockerfile
+    image: movie-explorer-etl:latest
+    profiles: ["db"]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_USER: ${POSTGRES_USER:-movies}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-movies}
+      POSTGRES_DB: ${POSTGRES_DB:-movies}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  pgdata:
