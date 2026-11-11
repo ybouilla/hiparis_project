@@ -60,6 +60,22 @@ docker compose up -d --scale app=4    # rescale live
 APP_REPLICAS=4 WEB_CONCURRENCY=2 PORT=5000 docker compose up -d
 ```
 
+#### Caching
+
+The movie data is a read-only CSV, so answers can be cached safely. Three layers, from the inside out:
+
+| Layer | What | Details |
+|---|---|---|
+| Flask app (`backend/app.py`) | genre list / min year (once per worker), `/statistics` by year range, `/allmovies` pages of at most 100 movies (`lru_cache`) | per worker, so it also works without nginx. Big answers (e.g. the whole dataset) are not cached to bound memory. |
+| nginx (`nginx/nginx.conf`) | `/allmovies` and `/statistics` for 60 s, shared by all replicas | the `X-Cache-Status` response header says `HIT`, `MISS` or `BYPASS`. Send `X-No-Cache: 1` to skip it. |
+| Cloudflare / browser | see below | `Cache-Control` set by nginx |
+
+To load-test the replicas rather than the cache, run Locust with `NO_CACHE=1` (it sends `X-No-Cache: 1`):
+```shell
+NO_CACHE=1 locust -f backend/performance/locustfile.py --host=http://localhost:5000 --headless -u 100 -t 1m
+```
+Caches are emptied when the app / nginx container is recreated, e.g. after a redeploy.
+
 #### Cloudflare (optional)
 
 Cloudflare can sit in front of nginx to give you HTTPS, DDoS/WAF protection and edge caching, without opening any inbound port. The stack then looks like: `Cloudflare -> cloudflared tunnel -> nginx -> app replicas`.
