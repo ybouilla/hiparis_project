@@ -1,6 +1,7 @@
 # app.py
 
 from math import floor
+import functools
 import sys
 import tempfile
 from flask import Flask, jsonify, request, redirect
@@ -28,39 +29,10 @@ SORTED_VALUES_AVAIL = {
 	"vote_average": "Vote_Average"
 }
 
-@app.route('/allmovies', methods=['GET'])
-def serve_movies():
-	"""
-    Return a paginated list of movies with optional filtering and sorting.
-
-    Query parameters:
-        start (int): Pagination start index.
-        end (int): Pagination end index.
-        title (str): Case-insensitive title search.
-        genre (list[str]): One or more genres to match.
-        lang (str): Original language code.
-        score (float): Minimum vote average.
-        dates (list[int]): Release year range [start, end).
-        order_by (str): Sort field.
-        order_desc (str): Sort direction ('asc' or 'desc').
-
-    Returns:
-        JSON response containing matching movies, total count,
-        available genres, dataset minimum year, and metric maxima.
-    """
+@functools.cache
+def _dataset_info():
+	"""Constants of the (read-only) dataset: computed once per worker, not on every request."""
 	df = load_csv()
-	min_date = df["Release_Date"].min().year
-	n_start = int(request.args.get("start", 0))
-	n_end = min(int(request.args.get("end",len(df)+1)), len(df)+1)
-	title = str(request.args.get("title", ""))
-	genre = request.args.getlist("genre", )
-	language = str(request.args.get("lang", ""))
-	min_rate = float(request.args.get("score", 0.))
-	dates = request.args.getlist("dates", )
-	order_by = request.args.get("order_by")
-	order_desc = request.args.get("order_desc", "asc") # boolean
-
-	
 	all_genres = sorted(
 						df["Genre"]
 						.dropna()
@@ -69,6 +41,20 @@ def serve_movies():
 						.str.strip()
 						.unique()
 					)
+	return all_genres, df["Release_Date"].min().year
+
+
+# Pages of at most this many movies are cached; bigger answers (e.g. the whole
+# dataset) are not, to keep the memory used by the cache bounded.
+MAX_CACHED_PAGE_SIZE = 100
+
+
+def _query_movies(n_start, n_end, title, genre, language, min_rate, dates, order_by, order_desc):
+	"""Filter, sort and paginate the movies. Arguments are hashable so results can be cached."""
+	df = load_csv()
+	all_genres, min_date = _dataset_info()
+	dates = list(dates)
+
 	if title:
 		mask = df["Title"].str.contains(title, case=False, na=False)
 		df = df[mask]
@@ -122,20 +108,55 @@ def serve_movies():
 		'max_val': max_val,
 	}
 
-	return jsonify(resp), 201
-	resp = {
-		'message': 'bad file format'
-	}
-	return jsonify(resp), 422
+	return resp
 
-@app.route('/statistics', methods=['GET'])
-def serve_stats():
-	# tests : curl http://127.0.0.1:5000/statistics
-	# curl http://127.0.0.1:5000/statistics?dates=1990&dates=2020
 
+_query_movies_cached = functools.lru_cache(maxsize=256)(_query_movies)
+
+
+@app.route('/allmovies', methods=['GET'])
+def serve_movies():
+	"""
+    Return a paginated list of movies with optional filtering and sorting.
+
+    Query parameters:
+        start (int): Pagination start index.
+        end (int): Pagination end index.
+        title (str): Case-insensitive title search.
+        genre (list[str]): One or more genres to match.
+        lang (str): Original language code.
+        score (float): Minimum vote average.
+        dates (list[int]): Release year range [start, end).
+        order_by (str): Sort field.
+        order_desc (str): Sort direction ('asc' or 'desc').
+
+    Returns:
+        JSON response containing matching movies, total count,
+        available genres, dataset minimum year, and metric maxima.
+    """
+	n_total = len(load_csv())
+	n_start = int(request.args.get("start", 0))
+	n_end = min(int(request.args.get("end", n_total + 1)), n_total + 1)
+	args = (
+		n_start,
+		n_end,
+		str(request.args.get("title", "")),
+		tuple(sorted(request.args.getlist("genre"))),  # "any of" semantics: order is irrelevant
+		str(request.args.get("lang", "")),
+		float(request.args.get("score", 0.)),
+		tuple(request.args.getlist("dates")),
+		request.args.get("order_by"),
+		request.args.get("order_desc", "asc"),
+	)
+	query = _query_movies_cached if n_end - n_start <= MAX_CACHED_PAGE_SIZE else _query_movies
+	return jsonify(query(*args)), 201
+
+@functools.lru_cache(maxsize=128)
+def _compute_stats(dates):
+	"""Statistics for a release-year range (`dates` is a tuple, so results are cacheable)."""
 	df = load_csv()
 
-	dates = request.args.getlist("dates", )
+	dates = list(dates)
 	
 
 	if len(dates) == 2:
@@ -200,7 +221,14 @@ def serve_stats():
 		'stats_countries': countries_stats,
 		'stats_genre': genre_stats
 	}
-	return jsonify(resp), 201
+	return resp
+
+
+@app.route('/statistics', methods=['GET'])
+def serve_stats():
+	# tests : curl http://127.0.0.1:5000/statistics
+	# curl http://127.0.0.1:5000/statistics?dates=1990&dates=2020
+	return jsonify(_compute_stats(tuple(request.args.getlist("dates")))), 201
 
 @app.route('/')
 def index():

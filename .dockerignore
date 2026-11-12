@@ -9,3 +9,7 @@ frontend/test-results
 imgs
 report.html
 bckuppackage.json
+dbt/target
+dbt/logs
+dbt/dbt_packages
+dbt/.user.yml

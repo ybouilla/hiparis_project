@@ -36,7 +36,7 @@ npm run build
 
 ### 1. Deploy with Docker (recommanded)
 
-For docker installation, please visit [docker website](https://docs.docker.com/engine/install/) 
+For docker installation, please visit [docker website](https://docs.docker.com/engine/install/). Podman works too (rootless, more secure): see "Podman" below.
 
 From the root folder, enter in your terminal: 
 ```shell
@@ -60,6 +60,88 @@ docker compose up -d --scale app=4    # rescale live
 APP_REPLICAS=4 WEB_CONCURRENCY=2 PORT=5000 docker compose up -d
 ```
 
+#### Caching
+
+The movie data is a read-only CSV, so answers can be cached safely. Three layers, from the inside out:
+
+| Layer | What | Details |
+|---|---|---|
+| Flask app (`backend/app.py`) | genre list / min year (once per worker), `/statistics` by year range, `/allmovies` pages of at most 100 movies (`lru_cache`) | per worker, so it also works without nginx. Big answers (e.g. the whole dataset) are not cached to bound memory. |
+| nginx (`nginx/nginx.conf`) | `/allmovies` and `/statistics` for 60 s, shared by all replicas | the `X-Cache-Status` response header says `HIT`, `MISS` or `BYPASS`. Send `X-No-Cache: 1` to skip it. |
+| Cloudflare / browser | see below | `Cache-Control` set by nginx |
+
+To load-test the replicas rather than the cache, run Locust with `NO_CACHE=1` (it sends `X-No-Cache: 1`):
+```shell
+NO_CACHE=1 locust -f backend/performance/locustfile.py --host=http://localhost:5000 --headless -u 100 -t 1m
+```
+Caches are emptied when the app / nginx container is recreated, e.g. after a redeploy.
+
+#### Security hardening
+
+The containers are locked down (`docker-compose.yml`, `Dockerfile`):
+
+| Measure | Where |
+|---|---|
+| Runs as a non-root user: uid 10001 for the app and the pipeline, uid 101 for nginx (the `nginx-unprivileged` image, listening on port 8080), uid 70 for PostgreSQL | every service |
+| All Linux capabilities dropped (`cap_drop: ALL`) and `no-new-privileges` | every service |
+| Read-only root filesystem; only small `tmpfs` mounts are writable: `/tmp`, nginx's generated config and its response cache (`/var/cache/nginx`, in memory), PostgreSQL's socket directory (and its data volume) | `app`, `nginx`, `db` |
+| Cap on the number of processes; memory limit | `app`, `nginx`, `db` (processes); `app` (memory) |
+| Fully qualified image names (`docker.io/...`), so the registry is never guessed | all images |
+| The database port is published on `127.0.0.1` only | `db` |
+
+#### Podman (rootless)
+
+[Podman](https://podman.io/) runs the same containers without a daemon and without root: it is more secure than Docker's default setup, because there is no privileged daemon socket and "root" inside a container is only your own unprivileged user on the host. `docker-compose.yml` works unchanged with `podman-compose`.
+
+```shell
+# install: e.g. `sudo apt install podman` or `sudo dnf install podman`, then
+pipx install podman-compose              # or: pip install --user podman-compose
+
+podman-compose up -d --build             # 2 replicas by default, http://localhost:5000
+podman-compose up -d --scale app=4       # rescale live
+podman-compose down
+
+# the optional parts work the same way
+podman-compose --profile db up -d db                 # PostgreSQL (see "Data warehouse")
+podman-compose --profile db build etl                # image of the pipeline (python + dbt)
+podman-compose --profile db run --rm etl             # load the CSV, then build the star schema with dbt
+CLOUDFLARE_TUNNEL_TOKEN=<token> podman-compose --profile cloudflare up -d
+
+# without compose (a single container, no load balancer)
+podman build -t webserver .
+podman run --rm -e MODE=serve -p 5000:5000 webserver
+```
+(`podman compose` without the dash also works: it calls whichever compose tool is installed.) On macOS and Windows, first run `podman machine init && podman machine start`.
+
+Things that differ from Docker:
+- **Ports below 1024 cannot be published** without root, which is why nginx listens on 8080 (published as 5000).
+- **Service names**: Podman's DNS is not at Docker's `127.0.0.11`. nginx therefore reads the DNS server from the container's `/etc/resolv.conf` when it starts (`nginx/nginx.conf` is a template), so the same file works on both.
+- **No CPU limit** is set: a rootless Podman refuses to start a container with `cpus` unless the `cpu` cgroup controller is delegated to your user (`systemctl edit user@.service` with `Delegate=cpu cpuset io memory pids`). After that you can add `cpus: "1.0"` under `deploy.resources.limits`.
+- **SELinux** hosts (Fedora, RHEL): the bind-mounted nginx file is relabelled with `:z`, already in the compose file.
+- **Starting at boot**: `restart: unless-stopped` does not survive a reboot of a rootless setup. Run `loginctl enable-linger $USER`, then `podman-compose systemd -a create-unit` (or use Quadlet).
+- **Health checks** (`podman ps` shows them) run from systemd timers: without systemd (e.g. WSL without systemd enabled) they stay at "starting", and `podman-compose up --wait` would wait forever. That is why nginx only waits for the app to be *started*, and the pipeline only for the database to be *started* (the loader retries its connection for about a minute).
+- **The nginx response cache lives in memory** (a `tmpfs` of 128 MB, above the 100 MB `max_size` of the cache), so it is emptied at every restart and, like any container memory, does not survive a reboot.
+- **The database volume** (`pgdata`) is a named volume of your user's Podman storage (`podman volume ls`). PostgreSQL runs as the image's own user (uid 70), which Podman maps to a sub-uid of yours; the volume's files are owned accordingly, so back it up with `podman volume export pgdata`, not by copying files from your home directory.
+
+CI jobs `podman-test` and `podman-db-test` start the stack and the database profile with rootless Podman, and check the cache and that the containers run as non-root.
+
+
+#### Cloudflare (optional)
+
+Cloudflare can sit in front of nginx to give you HTTPS, DDoS/WAF protection and edge caching, without opening any inbound port. The stack then looks like: `Cloudflare -> cloudflared tunnel -> nginx -> app replicas`.
+
+- **Tunnel**: the `cloudflared` service is in the `cloudflare` compose profile, so a plain `docker compose up` ignores it.
+  1. In Cloudflare Zero Trust, go to *Networks > Tunnels*, create a tunnel and copy its token.
+  2. In the tunnel, add a public hostname (a domain on your Cloudflare account) with the service set to `http://nginx:8080`.
+  3. Put the token in a `.env` file (see `.env.example`, `.env` is git-ignored) and start the stack:
+     ```shell
+     CLOUDFLARE_TUNNEL_TOKEN=<token> docker compose --profile cloudflare up -d
+     ```
+- **Caching**: nginx sets the `Cache-Control` headers (`nginx/nginx.conf`): `/static/*` is cached for a year (the React build hashes file names), `/allmovies` and `/statistics` get `s-maxage=60`, everything else (including `index.html`) is `no-cache`. Cloudflare does not cache JSON by default: to cache the two API routes, add a *Cache Rule* (*Caching > Cache Rules*) for them with "Eligible for cache" and edge TTL "Use cache-control header if present".
+- **Origin still reachable**: port `5000` stays published on the host, so the app can be reached without going through Cloudflare. Once the tunnel works, bind it to localhost (`127.0.0.1:${PORT:-5000}:8080` in the `nginx` service) or remove the published port.
+- **Client IPs**: behind the tunnel, the client address is in the `CF-Connecting-IP` header (nginx currently sees the `cloudflared` container).
+- **No account or domain?** `cloudflared tunnel --url http://localhost:5000` opens a temporary `https://<random>.trycloudflare.com` URL (no caching or WAF rules, for testing only).
+
 ### 2. Deploy without docker
 Not recommanded for production
 Run the following command from the project root directory:
@@ -70,6 +152,86 @@ gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
 ```
 Then open the application in your web browser: http://localhost:5000
 If it does not work, try to open it from an incognito browser window
+
+## Data warehouse (PostgreSQL, star schema)
+
+`movies.csv` can be loaded into PostgreSQL as a star schema. This is optional: the web app still reads the CSV directly.
+
+It is an ELT pipeline: Python extracts the CSV and loads it as-is into a `raw` table, then [dbt](https://www.getdbt.com/) transforms it into the star schema (SQL models, database constraints and tests).
+
+```shell
+docker compose --profile db up -d db       # PostgreSQL 17, data kept in the `pgdata` volume
+docker compose --profile db run --rm etl   # load raw.movies, then dbt build (a few seconds, safe to re-run)
+psql postgresql://movies:movies@localhost:5432/movies   # user / password / database: see .env.example
+```
+With Podman, replace `docker compose` by `podman-compose` (and run `podman-compose --profile db build etl` once before `run`).
+
+Without docker (a PostgreSQL of your own, in the project folder):
+```shell
+# once: the PostgreSQL *server* programs must be installed (no need to start any service)
+#   Debian / Ubuntu / WSL:  sudo apt install postgresql        macOS:  brew install postgresql@17
+scripts/localdb.sh start                  # creates ./.localdb on the first run, then starts the server
+uv pip install -r etl/requirements.txt       # pandas, psycopg, dbt-postgres (in a virtual environment)
+sh etl/run.sh                             # = python -m etl.load_raw  then  dbt build --project-dir dbt --profiles-dir dbt
+scripts/localdb.sh psql                   # SQL shell on the result
+scripts/localdb.sh stop                   # the data stays in ./.localdb until `scripts/localdb.sh reset`
+```
+`scripts/localdb.sh` needs no Docker, no root and no system service: it runs its own server, listening on `127.0.0.1` only, with the same default user, password and database as the compose setup (`url` prints the connection string, `status` tells whether it runs). If port 5432 is taken (Ubuntu starts a system PostgreSQL after `apt install postgresql`), use another one for both commands: `export POSTGRES_PORT=5433`. Any PostgreSQL you already run works as well: point the `POSTGRES_*` variables below to it and skip the script.
+
+The connection comes from `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` (defaults: `localhost`, `5432`, and `movies` for the last three). Arguments of `etl/run.sh` go to the loader: `--dry-run` only parses the CSV, `--recreate` drops and recreates `raw.movies`.
+
+### Model (`dbt/models/marts/`)
+
+One row per movie in the fact table. Genre is multi-valued, so it goes through a bridge table.
+
+```
+                     dim_date
+                        |
+  dim_movie ---- fact_movie ---- dim_language
+                        |
+              bridge_movie_genre ---- dim_genre
+```
+
+| Table | Content |
+|---|---|
+| `fact_movie` | measures `popularity`, `vote_count`, `vote_average`; keys to the dimensions |
+| `dim_date` | release date: year, quarter, month, day, weekday, decade |
+| `dim_language` | language code and English name |
+| `dim_genre`, `bridge_movie_genre` | the 19 genres and the movie-genre links (a movie has 1 to n genres) |
+| `dim_movie` | title, overview, poster URL (kept out of the fact table so that scans over the measures stay narrow) |
+| `vw_movies` | view with the same columns as the CSV, one row per movie |
+
+Key `0` is the "unknown" member of `dim_date`, `dim_language` and `dim_genre`, so foreign keys are never `NULL`. Don't sum a measure across genres: a movie with 3 genres has 3 rows in the bridge (count movies per genre instead).
+
+### Pipeline
+
+```
+movies.csv --python (etl/load_raw.py)--> raw.movies --dbt--> stg_* views --> dim_*, fact_movie, bridge tables --> vw_movies
+```
+
+1. **Extract + Load** (`etl/load_raw.py`): `backend/load_csv.py` parses the CSV (it also repairs the multi-line rows), then one transaction empties and refills `raw.movies` (`COPY`) and checks the row count. A failed run leaves the previous data in place. This step stays in Python because dbt seeds are meant for small reference files (the CSV has broken rows), and a platform like Airbyte would be far too heavy for one static file.
+2. **Transform** (`dbt/`): `stg_movies` and `stg_movie_genres` (views: cleaning, splitting the genre list), then the marts (tables). The language names come from the `language_names` seed.
+3. **Constraints**: every mart has an enforced dbt contract, so dbt checks the column types and creates the primary keys, foreign keys and `CHECK`s in the database. A violation makes the model fail, and the previous table stays in place.
+4. **Tests** (`dbt build` runs seeds, models and tests in dependency order; a failing test skips what depends on it): not-null / unique on the raw data, one fact row per raw movie, every movie has a genre, plausible release dates, valid weekdays, and a warning for language codes without a name.
+
+A model is replaced before its own tests run. So when a *test* fails (not a constraint), that table already holds the new data while the tables downstream keep the previous one. To inspect the lineage: `dbt docs generate` then `dbt docs serve` (with `--project-dir dbt --profiles-dir dbt`).
+
+Examples:
+```sql
+-- movies and average rating per genre
+SELECT g.genre_name, count(*) AS movies, round(avg(f.vote_average), 2) AS avg_rating
+FROM bridge_movie_genre b
+JOIN dim_genre g ON g.genre_key = b.genre_key
+JOIN fact_movie f ON f.movie_key = b.movie_key
+GROUP BY g.genre_name ORDER BY movies DESC;
+
+-- movies per decade
+SELECT d.decade, count(*) AS movies, round(avg(f.vote_average), 2) AS avg_rating
+FROM fact_movie f JOIN dim_date d ON d.date_key = f.date_key
+GROUP BY d.decade ORDER BY d.decade;
+```
+
+Tests: the dbt tests run as part of `dbt build`; the loader has `pytest etl/tests` (its database test runs only if `TEST_DATABASE_URL` points to a PostgreSQL database that may be overwritten). CI job `etl-test` runs both against a PostgreSQL container, running the pipeline twice.
 
 
 ## Example of usage:
@@ -192,6 +354,11 @@ docker logs webserver # display test logs
 
 Tests are re-used when running CI:
 for more details, please see `.github/workflow/build_test` file.
+
+Besides the unit/integration tests, the workflow has load-test jobs (Locust, see `backend/performance/locustfile.py`):
+- `scalability-test`: starts the compose stack with 2 replicas, scales it to 4, load-tests through nginx and checks every replica served requests.
+- `cloudflare-quick-tunnel-test`: same test through a temporary `trycloudflare.com` tunnel (no secret needed).
+- `cloudflare-test`: same test through your own tunnel and domain. It is skipped unless the repository has a `CLOUDFLARE_TUNNEL_TOKEN` secret and a `CLOUDFLARE_URL` variable (e.g. `https://movies.example.com`).
  
 ## Possible improvements:
 

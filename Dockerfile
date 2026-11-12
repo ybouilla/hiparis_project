@@ -2,7 +2,9 @@
 # for docker  
 
 # ---------- Stage 1: Build frontend ----------
-FROM node:20 AS frontend-builder
+# Base images are fully qualified: Podman refuses short names such as "node:20" when it
+# cannot ask which registry to use (no terminal, CI).
+FROM docker.io/library/node:20 AS frontend-builder
 
 WORKDIR /frontend
 
@@ -14,7 +16,7 @@ RUN npm run build
 
 
 # ---------- Stage 2: Build backend ----------
-FROM python:3.12-slim
+FROM docker.io/library/python:3.12-slim
 
 WORKDIR /
 
@@ -38,9 +40,16 @@ COPY entrypoint.sh ./entrypoint.sh
 COPY gunicorn.conf.py ./gunicorn.conf.py
 RUN chmod +x /entrypoint.sh
 
-ENV PYTHONPATH=/
+ENV PYTHONPATH=/ \
+    PYTHONDONTWRITEBYTECODE=1
 
 COPY --from=frontend-builder /frontend/build ./frontend/build
+
+# Run as an unprivileged user. The code stays owned by root and read-only for it: the app
+# only needs to write to /tmp (gunicorn's worker files), which compose mounts as a tmpfs.
+RUN groupadd --system --gid 10001 app \
+ && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
+USER 10001:10001
 
 EXPOSE 5000
 ENTRYPOINT ["/entrypoint.sh"]
