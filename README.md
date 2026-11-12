@@ -32,6 +32,94 @@ npm install
 npm run build
 ```
 
+## How the website works
+
+The site is a React single-page app served by a small Flask API. The API reads `backend/movies.csv` once (`backend/load_csv.py` repairs the records that span several lines) and keeps it as a pandas DataFrame in memory, so there is no database in the request path.
+
+### The stack
+
+```mermaid
+flowchart LR
+    user(["Browser<br/>React single-page app"])
+    cf["Cloudflare<br/>HTTPS, WAF, edge cache"]
+
+    subgraph stack["docker compose / podman-compose"]
+        nginx["nginx :8080<br/>load balancer<br/>response cache 60 s"]
+        subgraph replicas["app replicas, 2 by default (--scale app=N)"]
+            app1["gunicorn + Flask<br/>replica 1<br/>movies.csv in memory"]
+            app2["gunicorn + Flask<br/>replica N<br/>movies.csv in memory"]
+        end
+    end
+
+    user -->|"http://localhost:5000"| nginx
+    user -.->|"HTTPS (optional)"| cf
+    cf -.->|"tunnel"| nginx
+    nginx -->|"each request goes to one replica"| app1
+    nginx --> app2
+
+    subgraph optional["optional data warehouse, not used by the site yet"]
+        csv[("movies.csv")] -->|"python loader"| raw[("PostgreSQL<br/>raw.movies")]
+        raw -->|"dbt"| star[("star schema")]
+    end
+```
+
+nginx is the only entry point. It finds the replicas through the network's DNS name `app` (so scaling up or down needs no reload) and answers repeated `/allmovies` and `/statistics` requests from its own cache. Cloudflare and the PostgreSQL pipeline are optional.
+
+### What happens when you browse
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant R as React app
+    participant N as nginx
+    participant F as Flask replica
+    participant D as DataFrame in memory
+
+    U->>R: opens the site
+    R->>N: GET / (index.html and the JavaScript)
+    N->>F: forward
+    F-->>R: static files from frontend/build
+
+    R->>N: GET /allmovies?start=0&end=20&genre=...&order_by=...
+    alt same URL answered during the last 60 s
+        N-->>R: 201 JSON, X-Cache-Status HIT
+    else not in the cache
+        N->>F: forward to one replica
+        F->>D: filter, sort, take 20 rows
+        D-->>F: movies, total, genres
+        F-->>N: 201 JSON
+        N-->>R: 201 JSON, X-Cache-Status MISS
+    end
+
+    U->>R: scrolls down, or changes a filter or the sort
+    R->>R: scroll: ask for the next page. Filter: abort the pending request, empty the list
+    R->>N: GET /allmovies?start=20&end=40&...
+```
+
+### Inside the page
+
+```mermaid
+flowchart TD
+    filters["Filters: search, genres, language,<br/>minimum rating, years, sort"] --> debounce["the search text is debounced 300 ms"]
+    debounce --> reload["reload: abort the pending request,<br/>empty the list"]
+    reload --> page1["GET /allmovies, page 1 (20 movies)"]
+    page1 --> cards["cards in grid or list view,<br/>skeletons while loading"]
+    page1 -->|"no result"| empty["empty state with Clear all filters"]
+    cards -->|"bottom sentinel enters the viewport"| next["GET /allmovies, next page"]
+    next --> cards
+    next -->|"no more results"| finish["End of results"]
+    cards -->|"top sentinel enters the viewport"| prev["load the previous page"]
+    prev --> cards
+```
+
+| Route | Purpose | Parameters |
+|---|---|---|
+| `GET /` | the React app (`frontend/build`) | |
+| `GET /allmovies` | a page of movies, plus total, genre list and maxima | `start`, `end`, `title`, `genre` (repeatable), `lang`, `score`, `dates` (twice), `order_by`, `order_desc` |
+| `GET /statistics` | quartiles and counts by language and genre for the charts page | `dates` (twice) |
+
+Both API routes answer `201` with JSON. The `/statistics` page of the app draws its charts from that answer.
+
 ## Deploy
 
 ### 1. Deploy with Docker (recommanded)
@@ -351,15 +439,8 @@ docker logs webserver # display test logs
 ```
 
 ### CI/CD
+For further information reagrding CI/CD, please visit the page ![CI_CD](./CI_CD.md)
 
-Tests are re-used when running CI:
-for more details, please see `.github/workflow/build_test` file.
-
-Besides the unit/integration tests, the workflow has load-test jobs (Locust, see `backend/performance/locustfile.py`):
-- `scalability-test`: starts the compose stack with 2 replicas, scales it to 4, load-tests through nginx and checks every replica served requests.
-- `cloudflare-quick-tunnel-test`: same test through a temporary `trycloudflare.com` tunnel (no secret needed).
-- `cloudflare-test`: same test through your own tunnel and domain. It is skipped unless the repository has a `CLOUDFLARE_TUNNEL_TOKEN` secret and a `CLOUDFLARE_URL` variable (e.g. `https://movies.example.com`).
- 
 ## Possible improvements:
 
 **Regarding architecture**:
