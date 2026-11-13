@@ -11,9 +11,11 @@ comma-separated for several servers); "off" or an empty value disables it. If th
 reached, the answer is simply computed, and memcached is not tried again for a few seconds, so a
 dead server costs at most one short timeout, not one per request.
 """
+import argparse
 import hashlib
 import logging
 import os
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -153,3 +155,72 @@ def build_cache(data_version: str, env=os.environ) -> ResponseCache:
             log.warning("MEMCACHED_SERVERS is set but pymemcache is not installed: memcached is not used")
     # the data version is part of every key: a new movies.csv never gets answers computed from the old one
     return ResponseCache(shared, namespace=f"movies-v{CACHE_FORMAT}-{data_version}-")
+
+
+# ------------------------------------------------------------------------------------------------
+# Command line: python -m backend.cache ping|stats|flush
+# Used by scripts/localcache.sh, and handy to look at what memcached holds.
+# ------------------------------------------------------------------------------------------------
+
+def _text(value):
+    return value.decode("utf-8", "replace") if isinstance(value, bytes) else value
+
+
+def _describe(stats: dict) -> str:
+    """One readable block from memcached's `stats` answer."""
+    s = {_text(k): _text(v) for k, v in stats.items()}
+    hits, misses = int(s.get("get_hits", 0)), int(s.get("get_misses", 0))
+    rate = f"{100 * hits / (hits + misses):.0f} %" if hits + misses else "no request yet"
+    used, limit = int(s.get("bytes", 0)), int(s.get("limit_maxbytes", 0))
+    return "\n".join([
+        f"  version      {s.get('version', '?')}",
+        f"  uptime       {s.get('uptime', '?')} s",
+        f"  items        {s.get('curr_items', '?')}",
+        f"  memory       {used / 1e6:.1f} MB used of {limit / 1e6:.0f} MB",
+        f"  gets         {hits} hits, {misses} misses (hit rate: {rate})",
+        f"  evictions    {s.get('evictions', '?')}",
+    ])
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m backend.cache",
+        description="Look at the memcached used by the API (servers: --servers, else $MEMCACHED_SERVERS, else 127.0.0.1:11211).")
+    parser.add_argument("command", choices=["ping", "stats", "flush"],
+                        help="ping: is it answering?  stats: items, memory, hit rate.  flush: forget every cached answer")
+    parser.add_argument("--servers", default=None)
+    args = parser.parse_args(argv)
+
+    servers = args.servers or os.environ.get("MEMCACHED_SERVERS") or f"127.0.0.1:{DEFAULT_PORT}"
+    if servers.strip().lower() in DISABLED:
+        print("memcached is turned off (MEMCACHED_SERVERS=off)")
+        return 2
+    try:
+        from pymemcache.client.base import Client
+    except ImportError:
+        print("pymemcache is not installed: pip install -r requirements.txt")
+        return 2
+
+    exit_code = 0
+    for host, port in parse_servers(servers):
+        # replies are awaited here (default_noreply=False) so that flush can say it worked
+        client = Client((host, port), connect_timeout=1.0, timeout=1.0, default_noreply=False)
+        try:
+            version = _text(client.version())
+            if args.command == "ping":
+                print(f"{host}:{port}  memcached {version}")
+            elif args.command == "stats":
+                print(f"{host}:{port}\n{_describe(client.stats())}")
+            else:
+                client.flush_all()
+                print(f"{host}:{port}  flushed")
+        except Exception as error:
+            print(f"{host}:{port}  not reachable ({error})")
+            exit_code = 1
+        finally:
+            client.close()
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

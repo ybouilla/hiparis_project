@@ -2,11 +2,11 @@
 
 CI CD mainly executes unit tests, as well as end to end tests using differents setups and environments, and for stress tests. 
 
-`.github/workflows/build_test.yml` runs on every push and pull request to `dev` and `master`. It has 12 jobs with no dependency between them, so they all start at the same time (some run on several operating systems).
+`.github/workflows/build_test.yml` runs on every push and pull request to `dev` and `master`. It has 13 jobs with no dependency between them, so they all start at the same time (some run on several operating systems).
 
 ```mermaid
 flowchart LR
-    trigger(["push or pull request<br/>to dev / master"]) --> gha["GitHub Actions<br/>12 independent jobs, in parallel"]
+    trigger(["push or pull request<br/>to dev / master"]) --> gha["GitHub Actions<br/>13 independent jobs, in parallel"]
 
     subgraph data["Data pipeline"]
         et["etl-test<br/>PostgreSQL service container:<br/>loader tests, pipeline twice, dbt tests"]
@@ -29,7 +29,8 @@ flowchart LR
     subgraph code["Code tests"]
         ut["unit-tests-frontend<br/>ubuntu, macOS, Windows<br/>Jest + Testing Library"]
         it["integration-tests-frontend<br/>ubuntu, macOS<br/>build, then Playwright end-to-end<br/>against a real gunicorn"]
-        bt["tests-backend<br/>ubuntu, macOS<br/>pytest: API and loader"]
+        bt["tests-backend<br/>ubuntu, macOS<br/>pytest: API, cache, loader"]
+        lc["local-cache-test<br/>app run locally with memcached<br/>(scripts/localcache.sh)"]
     end
 
     gha --> data
@@ -45,7 +46,7 @@ flowchart LR
 |---|---|---|
 | `unit-tests-frontend` | `npm ci`, then Jest tests of the page, the infinite scroll, the reload on filter change and the movie card | a test fails (the npm debug log is printed if `npm ci` itself fails) |
 | `integration-tests-frontend` | builds the React app, then Playwright drives a real browser against gunicorn: 20 cards, then 40 after scrolling, and the navigation to the statistics page | an end-to-end test fails |
-| `tests-backend` | `pytest`: the API (status, title, language and score filters) and the loader | a test fails |
+| `tests-backend` | `pytest`: the API (status, title, language and score filters), the two-level cache (against a fake memcached server) and the loader | a test fails |
 | `stress-test` | gunicorn started locally, then Locust for 2 minutes with 100 users | any request is not a `201` with the expected JSON key (Locust then exits with code 1) |
 | `docker-test` | builds the Docker image, runs it, runs Locust against the container, then starts the image's own test mode | the build fails or a Locust request fails (the test-mode run is started but its result is not checked yet) |
 | `scalability-test` | see the diagram below | a step fails, or a replica received no request |
@@ -53,6 +54,7 @@ flowchart LR
 | `cloudflare-test` | the same through your own tunnel and domain. Skipped unless the repository has the `CLOUDFLARE_TUNNEL_TOKEN` secret and the `CLOUDFLARE_URL` variable, and on pull requests from forks | a load-test request fails |
 | `podman-test` | the stack on rootless Podman: it starts, the API answers, nginx's cache and memcached work, the containers do not run as root | a step fails (the job does not block the others yet: `continue-on-error`) |
 | `etl-test` | PostgreSQL as a service container: loader tests, then the pipeline twice (load `raw.movies`, then `dbt build` with its tests), then checks on the warehouse | a test, a dbt model or a dbt test fails |
+| `local-cache-test` | memcached installed with `apt` and started by `scripts/localcache.sh` (no Docker), the app run locally with 2 gunicorn workers: the same URL 16 times must give one `miss` and answers from `memcached`, and `stats` must show cached items | a step fails, or no answer comes from memcached |
 | `local-db-test` | the same pipeline against the private PostgreSQL started by `scripts/localdb.sh` (no Docker) | the pipeline or the final row count fails |
 | `podman-db-test` | the database profile on rootless Podman | non-blocking, like `podman-test` |
 

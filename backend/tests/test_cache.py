@@ -13,7 +13,7 @@ import pytest
 pytest.importorskip("pymemcache")
 
 import backend.app as backend_app                                  # noqa: E402
-from backend.cache import ResponseCache, SharedCache, build_cache, parse_servers  # noqa: E402
+from backend.cache import ResponseCache, SharedCache, build_cache, main as cache_cli, parse_servers  # noqa: E402
 
 
 class _Handler(socketserver.StreamRequestHandler):
@@ -30,8 +30,22 @@ class _Handler(socketserver.StreamRequestHandler):
             if command in (b"get", b"gets"):
                 for key in parts[1:]:
                     if key in store:
+                        self.server.hits += 1
                         self.wfile.write(b"VALUE %s 0 %d\r\n%s\r\n" % (key, len(store[key]), store[key]))
+                    else:
+                        self.server.misses += 1
                 self.wfile.write(b"END\r\n")
+            elif command == b"stats":
+                stats = [("version", "fake-1.6"), ("uptime", 5), ("curr_items", len(store)),
+                         ("bytes", sum(len(v) for v in store.values())), ("limit_maxbytes", 67108864),
+                         ("get_hits", self.server.hits), ("get_misses", self.server.misses), ("evictions", 0)]
+                for name, value in stats:
+                    self.wfile.write(b"STAT %s %s\r\n" % (name.encode(), str(value).encode()))
+                self.wfile.write(b"END\r\n")
+            elif command == b"flush_all":
+                store.clear()
+                if parts[-1] != b"noreply":
+                    self.wfile.write(b"OK\r\n")
             elif command == b"set":
                 key, _flags, _expire, size = parts[1:5]
                 data = self.rfile.read(int(size) + 2)[:-2]
@@ -52,6 +66,7 @@ def memcached():
     server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _Handler)
     server.daemon_threads = True
     server.store = {}
+    server.hits = server.misses = 0
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"127.0.0.1:{server.server_address[1]}", server.store
     server.shutdown()
@@ -186,3 +201,41 @@ class TestApi:
         b = client.get("/allmovies?start=0&end=20&genre=Comedy")
         assert a.headers["X-App-Cache"] == b.headers["X-App-Cache"] == "miss"
         assert a.get_data() != b.get_data()
+
+
+class TestCommandLine:
+    """python -m backend.cache ping|stats|flush, used by scripts/localcache.sh."""
+
+    def test_ping(self, memcached, capsys):
+        address, _ = memcached
+        assert cache_cli(["ping", "--servers", address]) == 0
+        assert f"{address}  memcached fake" in capsys.readouterr().out
+
+    def test_stats_show_items_and_hit_rate(self, memcached, capsys):
+        address, store = memcached
+        cache = SharedCache(address)
+        cache.set("a", b"12345")
+        assert _wait_for(lambda: store)
+        assert cache.get("a") == b"12345" and cache.get("absent") is None   # one hit, one miss
+        assert cache_cli(["stats", "--servers", address]) == 0
+        out = capsys.readouterr().out
+        assert "items        1" in out
+        assert "1 hits, 1 misses (hit rate: 50 %)" in out
+        assert "0.0 MB used of 67 MB" in out
+
+    def test_flush_forgets_everything(self, memcached, capsys):
+        address, store = memcached
+        SharedCache(address).set("a", b"x")
+        assert _wait_for(lambda: store)
+        assert cache_cli(["flush", "--servers", address]) == 0
+        assert "flushed" in capsys.readouterr().out
+        assert store == {}
+
+    def test_unreachable_server_is_reported_not_raised(self, capsys):
+        assert cache_cli(["ping", "--servers", f"127.0.0.1:{_free_port()}"]) == 1
+        assert "not reachable" in capsys.readouterr().out
+
+    def test_disabled(self, monkeypatch, capsys):
+        monkeypatch.setenv("MEMCACHED_SERVERS", "off")
+        assert cache_cli(["stats"]) == 2
+        assert "turned off" in capsys.readouterr().out

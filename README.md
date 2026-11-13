@@ -105,30 +105,8 @@ sequenceDiagram
     R->>R: scroll: ask for the next page. Filter: abort the pending request, empty the list
     R->>N: GET /allmovies?start=20&end=40&...
 ```
-
-### Inside the page
-
-```mermaid
-flowchart TD
-    filters["Filters: search, genres, language,<br/>minimum rating, years, sort"] --> debounce["the search text is debounced 300 ms"]
-    debounce --> reload["reload: abort the pending request,<br/>empty the list"]
-    reload --> page1["GET /allmovies, page 1 (20 movies)"]
-    page1 --> cards["cards in grid or list view,<br/>skeletons while loading"]
-    page1 -->|"no result"| empty["empty state with Clear all filters"]
-    cards -->|"bottom sentinel enters the viewport"| next["GET /allmovies, next page"]
-    next --> cards
-    next -->|"no more results"| finish["End of results"]
-    cards -->|"top sentinel enters the viewport"| prev["load the previous page"]
-    prev --> cards
-```
-
-| Route | Purpose | Parameters |
-|---|---|---|
-| `GET /` | the React app (`frontend/build`) | |
-| `GET /allmovies` | a page of movies, plus total, genre list and maxima | `start`, `end`, `title`, `genre` (repeatable), `lang`, `score`, `dates` (twice), `order_by`, `order_desc` |
-| `GET /statistics` | quartiles and counts by language and genre for the charts page | `dates` (twice) |
-
-Both API routes answer `201` with JSON. The `/statistics` page of the app draws its charts from that answer.
+### Web description
+See ![web_descr](./web_description.md) for further information.
 
 ## Deploy
 
@@ -171,7 +149,9 @@ The movie data is a read-only CSV, so answers can be cached safely. Four layers,
 
 The `X-App-Cache` response header tells where an answer came from: `memory` (the worker), `memcached` (another worker computed it) or `miss` (computed now).
 
-memcached is configured by `MEMCACHED_SERVERS` (default `memcached:11211` in `docker-compose.yml`; several servers can be listed, separated by commas) and `MEMCACHED_TTL` (seconds, default 3600). Set `MEMCACHED_SERVERS=off`, or leave it unset (the default when you run gunicorn yourself), to use only the cache in each worker's memory: the app never needs memcached. If memcached is down or slow, the answer is simply computed, and memcached is not tried again for 10 seconds. The data version (size and date of `movies.csv`) is part of every key, so a new CSV never gets answers computed from the old one. To try it without Docker: install memcached (`sudo apt install memcached`), run `memcached -m 64 -l 127.0.0.1`, then `MEMCACHED_SERVERS=127.0.0.1:11211 gunicorn --bind 0.0.0.0:5000 backend.wsgi:app`.
+memcached is configured by `MEMCACHED_SERVERS` (default `memcached:11211` in `docker-compose.yml`; several servers can be listed, separated by commas) and `MEMCACHED_TTL` (seconds, default 3600). Set `MEMCACHED_SERVERS=off`, or leave it unset (the default when you run gunicorn yourself), to use only the cache in each worker's memory: the app never needs memcached. If memcached is down or slow, the answer is simply computed, and memcached is not tried again for 10 seconds. The data version (size and date of `movies.csv`) is part of every key, so a new CSV never gets answers computed from the old one. To use it without Docker, see "With memcached" under "Deploy without docker".
+
+memcached keeps its answers across restarts of the app, and the keys do not contain the version of the *code*: after changing how an answer is computed (a filter, a statistic), forget the old ones with `scripts/localcache.sh flush` (or restart the `memcached` container).
 
 A browser cannot talk to memcached (it is a TCP protocol, not HTTP), so it is used by the Flask replicas, not by the React code. The front end benefits indirectly: answers come back faster, and the browser itself keeps what `Cache-Control` allows.
 
@@ -257,6 +237,30 @@ gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
 ```
 Then open the application in your web browser: http://localhost:5000
 If it does not work, try to open it from an incognito browser window
+
+#### With memcached (optional)
+
+Run like this, each gunicorn worker only has the cache in its own memory. To share the answers between the workers, and keep them across restarts, run memcached too. `scripts/localcache.sh` starts a private one for you: no Docker, no root, listening on `127.0.0.1` only.
+
+```shell
+sudo apt install memcached                # once (macOS: brew install memcached); only the program is needed
+WEB_CONCURRENCY=2 scripts/localcache.sh run gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
+```
+`run` starts memcached if needed, sets `MEMCACHED_SERVERS`, then runs the command you give it (it works the same with `flask`: see "Debug"). The other commands:
+
+```shell
+scripts/localcache.sh stats      # items, memory, hit rate
+scripts/localcache.sh flush      # forget every cached answer
+scripts/localcache.sh status
+scripts/localcache.sh stop       # memcached keeps running after the app stops, until you do this
+eval "$(scripts/localcache.sh env)"   # to set MEMCACHED_SERVERS in your shell instead of using `run`
+```
+On Debian and Ubuntu the `memcached` package also starts a system memcached on `127.0.0.1:11211`. The script then uses that one (and never stops it); if you prefer a separate private one, use another port: `MEMCACHED_PORT=11311`. Memory defaults to 64 MB (`MEMCACHED_MEMORY`). Windows: use WSL.
+
+To see it work, ask for the same page twice and look at the `X-App-Cache` header (`memory` for the worker's own cache, `memcached` when another worker computed it):
+```shell
+curl -si "http://localhost:5000/allmovies?start=0&end=20" | grep -i x-app-cache
+```
 
 ## Data warehouse (PostgreSQL, star schema)
 
@@ -377,6 +381,7 @@ for debugging or switching to development mode
 cd backend
 flask --app app.py --debug run
 ```
+  (with memcached: `../scripts/localcache.sh run flask --app app.py --debug run`, then `../scripts/localcache.sh flush` after changing how an answer is computed)
 * **for frontend**:
 
 ```shell

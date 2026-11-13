@@ -610,3 +610,55 @@ jobs:
       - name: Stop the local database
         if: always()
         run: scripts/localdb.sh stop
+
+  local-cache-test:
+    # The Docker-free setup: memcached installed with apt and started by scripts/localcache.sh, the
+    # app run locally with gunicorn (2 workers). The workers must share their answers through it.
+    runs-on: ubuntu-24.04
+    env:
+      MEMCACHED_PORT: "11311"   # not 11211: the apt package also starts a system memcached there
+      WEB_CONCURRENCY: "2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.28"
+
+      - name: Install memcached and the app's dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y memcached
+          uv venv
+          uv pip install -r requirements.txt
+
+      - name: Start memcached with the script
+        run: |
+          scripts/localcache.sh start
+          scripts/localcache.sh status
+
+      - name: Run the app on top of it and check that the workers share their answers
+        run: |
+          source .venv/bin/activate
+          scripts/localcache.sh run gunicorn --bind 127.0.0.1:5000 --daemon --pid gunicorn.pid backend.wsgi:app
+          curl -fsS --retry 20 --retry-delay 1 --retry-all-errors -o /dev/null "http://127.0.0.1:5000/allmovies?start=0&end=1"
+          # the same URL 16 times: one worker computes the answer (miss), the other must find it in memcached
+          url="http://127.0.0.1:5000/allmovies?start=0&end=20&genre=Thriller&order_by=vote_count"
+          for i in $(seq 1 16); do
+            curl -s -D - -o /dev/null "$url" | tr -d '\r' | grep -i '^x-app-cache' | awk '{print $2}'
+          done | sort | uniq -c | tee layers.txt
+          grep -qw miss layers.txt
+          grep -qw memcached layers.txt
+          scripts/localcache.sh stats | tee stats.txt
+          grep -Eq 'items +[1-9]' stats.txt
+
+      - name: Flush and stop
+        if: always()
+        run: |
+          scripts/localcache.sh flush || true
+          kill "$(cat gunicorn.pid)" 2>/dev/null || true
+          scripts/localcache.sh stop
