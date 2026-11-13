@@ -216,6 +216,17 @@ jobs:
           echo "first=$first second=$second with X-No-Cache=$bypass"
           test "$first" = "MISS"; test "$second" = "HIT"; test "$bypass" = "BYPASS"
 
+      - name: memcached shares answers between the replicas
+        run: |
+          # X-No-Cache skips nginx's cache, so the requests reach the app. The same URL 16 times: one
+          # worker computes the answer (miss), the others must find it in memcached.
+          url="http://localhost:5000/allmovies?start=0&end=20&genre=Thriller&order_by=vote_count"
+          for i in $(seq 1 16); do
+            curl -s -D - -o /dev/null -H 'X-No-Cache: 1' "$url" | tr -d '\r' | grep -i '^x-app-cache' | awk '{print $2}'
+          done | sort | uniq -c | tee layers.txt
+          grep -qw miss layers.txt
+          grep -qw memcached layers.txt
+
       - name: Load test through nginx
         env:
           NO_CACHE: 1   # every request must reach a replica, so the per-replica check below is meaningful
@@ -433,6 +444,15 @@ jobs:
           first=$(status "$url"); second=$(status "$url"); bypass=$(status -H 'X-No-Cache: 1' "$url")
           echo "first=$first second=$second with X-No-Cache=$bypass"
           test "$first" = "MISS"; test "$second" = "HIT"; test "$bypass" = "BYPASS"
+
+      - name: memcached shares answers between the replicas
+        run: |
+          url="http://localhost:5000/allmovies?start=0&end=20&genre=Thriller&order_by=vote_count"
+          for i in $(seq 1 16); do
+            curl -s -D - -o /dev/null -H 'X-No-Cache: 1' "$url" | tr -d '\r' | grep -i '^x-app-cache' | awk '{print $2}'
+          done | sort | uniq -c | tee layers.txt
+          grep -qw miss layers.txt
+          grep -qw memcached layers.txt
 
       - name: API answers and containers are unprivileged
         run: |

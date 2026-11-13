@@ -49,6 +49,7 @@ flowchart LR
             app1["gunicorn + Flask<br/>replica 1<br/>movies.csv in memory"]
             app2["gunicorn + Flask<br/>replica N<br/>movies.csv in memory"]
         end
+        mc[("memcached<br/>64 MB, shared answers")]
     end
 
     user -->|"http://localhost:5000"| nginx
@@ -56,6 +57,8 @@ flowchart LR
     cf -.->|"tunnel"| nginx
     nginx -->|"each request goes to one replica"| app1
     nginx --> app2
+    app1 <-->|"answers"| mc
+    app2 <-->|"answers"| mc
 
     subgraph optional["optional data warehouse, not used by the site yet"]
         csv[("movies.csv")] -->|"python loader"| raw[("PostgreSQL<br/>raw.movies")]
@@ -63,7 +66,7 @@ flowchart LR
     end
 ```
 
-nginx is the only entry point. It finds the replicas through the network's DNS name `app` (so scaling up or down needs no reload) and answers repeated `/allmovies` and `/statistics` requests from its own cache. Cloudflare and the PostgreSQL pipeline are optional.
+nginx is the only entry point. It finds the replicas through the network's DNS name `app` (so scaling up or down needs no reload) and answers repeated `/allmovies` and `/statistics` requests from its own cache. The replicas share the answers they compute through memcached. Cloudflare and the PostgreSQL pipeline are optional.
 
 ### What happens when you browse
 
@@ -73,6 +76,7 @@ sequenceDiagram
     participant R as React app
     participant N as nginx
     participant F as Flask replica
+    participant M as memcached
     participant D as DataFrame in memory
 
     U->>R: opens the site
@@ -85,9 +89,15 @@ sequenceDiagram
         N-->>R: 201 JSON, X-Cache-Status HIT
     else not in the cache
         N->>F: forward to one replica
-        F->>D: filter, sort, take 20 rows
-        D-->>F: movies, total, genres
-        F-->>N: 201 JSON
+        alt in the worker's memory, or already in memcached
+            F->>M: get (unless it is in the worker's memory)
+            M-->>F: the stored JSON
+        else computed now
+            F->>D: filter, sort, take 20 rows
+            D-->>F: movies, total, genres
+            F->>M: set, for the other replicas
+        end
+        F-->>N: 201 JSON, X-App-Cache memory, memcached or miss
         N-->>R: 201 JSON, X-Cache-Status MISS
     end
 
@@ -150,19 +160,26 @@ APP_REPLICAS=4 WEB_CONCURRENCY=2 PORT=5000 docker compose up -d
 
 #### Caching
 
-The movie data is a read-only CSV, so answers can be cached safely. Three layers, from the inside out:
+The movie data is a read-only CSV, so answers can be cached safely. Four layers, from the inside out:
 
 | Layer | What | Details |
 |---|---|---|
-| Flask app (`backend/app.py`) | genre list / min year (once per worker), `/statistics` by year range, `/allmovies` pages of at most 100 movies (`lru_cache`) | per worker, so it also works without nginx. Big answers (e.g. the whole dataset) are not cached to bound memory. |
+| Memory of each gunicorn worker (`backend/cache.py`) | the genre list / min year (once), then the JSON of `/statistics` by year range and of `/allmovies` pages of at most 100 movies (256 answers, least recently used first) | the fastest, but private to the worker. Big answers (e.g. the whole dataset) are never cached, to bound memory. |
+| memcached (`memcached` service) | the same JSON answers, for 1 hour | shared by **all workers of all replicas**: the first one to get a request computes the answer, the others reuse it, and it survives a restart of the app. Optional: see below. |
 | nginx (`nginx/nginx.conf`) | `/allmovies` and `/statistics` for 60 s, shared by all replicas | the `X-Cache-Status` response header says `HIT`, `MISS` or `BYPASS`. Send `X-No-Cache: 1` to skip it. |
 | Cloudflare / browser | see below | `Cache-Control` set by nginx |
+
+The `X-App-Cache` response header tells where an answer came from: `memory` (the worker), `memcached` (another worker computed it) or `miss` (computed now).
+
+memcached is configured by `MEMCACHED_SERVERS` (default `memcached:11211` in `docker-compose.yml`; several servers can be listed, separated by commas) and `MEMCACHED_TTL` (seconds, default 3600). Set `MEMCACHED_SERVERS=off`, or leave it unset (the default when you run gunicorn yourself), to use only the cache in each worker's memory: the app never needs memcached. If memcached is down or slow, the answer is simply computed, and memcached is not tried again for 10 seconds. The data version (size and date of `movies.csv`) is part of every key, so a new CSV never gets answers computed from the old one. To try it without Docker: install memcached (`sudo apt install memcached`), run `memcached -m 64 -l 127.0.0.1`, then `MEMCACHED_SERVERS=127.0.0.1:11211 gunicorn --bind 0.0.0.0:5000 backend.wsgi:app`.
+
+A browser cannot talk to memcached (it is a TCP protocol, not HTTP), so it is used by the Flask replicas, not by the React code. The front end benefits indirectly: answers come back faster, and the browser itself keeps what `Cache-Control` allows.
 
 To load-test the replicas rather than the cache, run Locust with `NO_CACHE=1` (it sends `X-No-Cache: 1`):
 ```shell
 NO_CACHE=1 locust -f backend/performance/locustfile.py --host=http://localhost:5000 --headless -u 100 -t 1m
 ```
-Caches are emptied when the app / nginx container is recreated, e.g. after a redeploy.
+The memory caches and nginx's cache are emptied when their container is recreated, e.g. after a redeploy (memcached too, as it has no volume).
 
 #### Security hardening
 
@@ -170,12 +187,12 @@ The containers are locked down (`docker-compose.yml`, `Dockerfile`):
 
 | Measure | Where |
 |---|---|
-| Runs as a non-root user: uid 10001 for the app and the pipeline, uid 101 for nginx (the `nginx-unprivileged` image, listening on port 8080), uid 70 for PostgreSQL | every service |
+| Runs as a non-root user: uid 10001 for the app and the pipeline, uid 101 for nginx (the `nginx-unprivileged` image, listening on port 8080), uid 70 for PostgreSQL, the image's `memcache` user for memcached | every service |
 | All Linux capabilities dropped (`cap_drop: ALL`) and `no-new-privileges` | every service |
-| Read-only root filesystem; only small `tmpfs` mounts are writable: `/tmp`, nginx's generated config and its response cache (`/var/cache/nginx`, in memory), PostgreSQL's socket directory (and its data volume) | `app`, `nginx`, `db` |
-| Cap on the number of processes; memory limit | `app`, `nginx`, `db` (processes); `app` (memory) |
+| Read-only root filesystem; only small `tmpfs` mounts are writable: `/tmp`, nginx's generated config and its response cache (`/var/cache/nginx`, in memory), PostgreSQL's socket directory (and its data volume) | `app`, `nginx`, `memcached`, `db` |
+| Cap on the number of processes; memory limit | `app`, `nginx`, `memcached`, `db` (processes); `app`, `memcached` (memory) |
 | Fully qualified image names (`docker.io/...`), so the registry is never guessed | all images |
-| The database port is published on `127.0.0.1` only | `db` |
+| The database port is published on `127.0.0.1` only; memcached (no authentication) publishes no port at all, only the other containers can reach it | `db`, `memcached` |
 
 #### Podman (rootless)
 

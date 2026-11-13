@@ -51,7 +51,7 @@ flowchart LR
 | `scalability-test` | see the diagram below | a step fails, or a replica received no request |
 | `cloudflare-quick-tunnel-test` | 4 replicas behind a temporary `trycloudflare.com` URL (no account needed), Locust through it, every replica must have received requests | same as above |
 | `cloudflare-test` | the same through your own tunnel and domain. Skipped unless the repository has the `CLOUDFLARE_TUNNEL_TOKEN` secret and the `CLOUDFLARE_URL` variable, and on pull requests from forks | a load-test request fails |
-| `podman-test` | the stack on rootless Podman: it starts, the API answers, the cache works, the containers do not run as root | a step fails (the job does not block the others yet: `continue-on-error`) |
+| `podman-test` | the stack on rootless Podman: it starts, the API answers, nginx's cache and memcached work, the containers do not run as root | a step fails (the job does not block the others yet: `continue-on-error`) |
 | `etl-test` | PostgreSQL as a service container: loader tests, then the pipeline twice (load `raw.movies`, then `dbt build` with its tests), then checks on the warehouse | a test, a dbt model or a dbt test fails |
 | `local-db-test` | the same pipeline against the private PostgreSQL started by `scripts/localdb.sh` (no Docker) | the pipeline or the final row count fails |
 | `podman-db-test` | the database profile on rootless Podman | non-blocking, like `podman-test` |
@@ -71,8 +71,9 @@ What `scalability-test` does, step by step:
 ```mermaid
 flowchart TD
     s1["Start the stack<br/>2 replicas"] --> s2["Scale to 4 replicas<br/>nginx finds them through DNS"]
-    s2 --> s3["Cache check on one URL:<br/>MISS, then HIT,<br/>then BYPASS with X-No-Cache"]
-    s3 --> s4["Locust, 100 users, 1 min<br/>with X-No-Cache, so the<br/>replicas get the load, not the cache"]
+    s2 --> s3["nginx cache check on one URL:<br/>MISS, then HIT,<br/>then BYPASS with X-No-Cache"]
+    s3 --> s3b["memcached check: 16 identical requests<br/>that skip nginx's cache: one miss,<br/>the others answered by memcached"]
+    s3b --> s4["Locust, 100 users, 1 min<br/>with X-No-Cache, so the<br/>replicas get the load, not the cache"]
     s4 --> s5["Each replica's log must show<br/>GET /allmovies"]
     s5 --> s6["Upload the Locust HTML report"]
 ```
