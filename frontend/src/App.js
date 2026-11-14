@@ -24,7 +24,8 @@ import ViewModuleIcon from "@mui/icons-material/ViewModule";
 import ViewListIcon from "@mui/icons-material/ViewList";
 
 import axios from 'axios';
-import qs from 'qs';
+import { useQueryClient } from "@tanstack/react-query";
+import { cachedGet } from "./api";
 import { Link, } from "react-router-dom";
 //import moviesData from "./movies.json";
 import MovieCard, { MovieCardSkeleton } from "./MovieCard";
@@ -69,10 +70,14 @@ const moviesData = [
   }
 ]
 const PAGE_SIZE = 20;
+// The statistics page is a separate chunk (see AppRoutes.js): fetch it as soon as the user
+// shows interest in it, so that clicking the link does not wait for the download.
+const preloadStatistics = () => import("./MovieGraph");
 const min_dates = 1900;
 const DRAWER_WIDTH = 280;
 const DEFAULT_YEAR_RANGE = [1900, 2026];
 export default function App() {
+  const queryClient = useQueryClient();
   const df = moviesData;
 
   // react states
@@ -141,36 +146,28 @@ export default function App() {
       const start = (pageNumber - 1) * PAGE_SIZE;
       try {
         
-        const request = await axios.get('/allmovies',  {
-          
-          params: {"start": start,
-                   "end": start + PAGE_SIZE,
-                   "title": search,
-                  "genre": selectedGenres,
-                  "lang": language,
-                  "score": stars*2,
-                  "dates": yearRange,
-                  "order_by": sortBy,
-                  "order_desc": sortingDirection,
-                },
-          headers: {
-            // No need to set 'Content-Type', axios will do it for us
-          },
-          signal,
-           paramsSerializer: (params) =>
-            qs.stringify(params, { arrayFormat: "repeat" })
-        });
-        console.log('got response', request)
+        // through the React Query cache: a page seen before (same filters, same sort) costs no request
+        const data = await cachedGet(queryClient, '/allmovies', {
+          "start": start,
+          "end": start + PAGE_SIZE,
+          "title": search,
+          "genre": selectedGenres,
+          "lang": language,
+          "score": stars*2,
+          "dates": yearRange,
+          "order_by": sortBy,
+          "order_desc": sortingDirection,
+        }, signal);
 
-        // setMovies(Array.isArray(request.data.movies)
-        //           ? request.data.movies
+        // setMovies(Array.isArray(data.movies)
+        //           ? data.movies
         //           : Array.isArray(request.data)
         //           ? request.data
         //           : [])
-        setTotalMovies(request.data.total_movies);
-        setAllGenres(request.data.all_genres);
-        setMinDate(request.data.min_date)
-        return request.data.movies ?? [];
+        setTotalMovies(data.total_movies);
+        setAllGenres(data.all_genres);
+        setMinDate(data.min_date)
+        return data.movies ?? [];
       } catch (error) {
         if (axios.isCancel(error)) return [];
         console.error('Fetching error:', error);
@@ -414,7 +411,8 @@ useEffect(() => {
             <Button color="inherit" component={Link} to="/" aria-current="page" sx={{ bgcolor: "rgba(255,255,255,0.18)" }}>
               <strong>Movie</strong>
             </Button>
-            <Button color="inherit" component={Link} to="/statistics">
+            <Button color="inherit" component={Link} to="/statistics"
+              onMouseEnter={preloadStatistics} onFocus={preloadStatistics}>
               <strong>Movies Statistics</strong>
             </Button>
           </Box>
