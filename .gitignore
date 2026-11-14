@@ -4,3 +4,8 @@ dbt/logs/
 dbt/dbt_packages/
 .localdb/
 dbt/.user.yml
+.localcache/
+.lighthouseci/
+lighthouse-summary.md
+# Chrome temp profiles that Lighthouse leaves in the current folder when run on WSL
+/C:*

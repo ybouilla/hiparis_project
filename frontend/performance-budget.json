@@ -1,0 +1,14 @@
+{
+  "_comment": "Size budget checked by e2e_tests/budget.spec.js on every run of the end-to-end tests. Sizes are KB gzipped, own files only (the posters come from TMDB). Measured on 2026-11 with about 13 % of headroom: raise a limit only on purpose, in the same PR as the change that needs it.",
+  "home": {
+    "jsGzipKB": 260,
+    "cssGzipKB": 2,
+    "requests": 6,
+    "apiRequests": 1,
+    "flagRequests": 0
+  },
+  "statistics": {
+    "extraJsGzipKB": 620,
+    "apiRequests": 2
+  }
+}
