@@ -724,6 +724,16 @@ jobs:
       - name: Start the whole stack (nginx in front of the app)
         run: docker compose up -d --build --wait
 
+      - name: nginx compresses the JavaScript
+        # the Lighthouse size limit assumes it: if a file type is missing from gzip_types the bundle is
+        # sent uncompressed (670 KB instead of about 240 KB), and this says so directly
+        run: |
+          js=$(curl -s http://localhost:5000/ | grep -o '/static/js/main\.[A-Za-z0-9]*\.js' | head -1)
+          test -n "$js"
+          headers=$(curl -s -D - -o /dev/null -H 'Accept-Encoding: gzip' "http://localhost:5000$js" | tr -d '\r')
+          echo "$headers" | grep -i -E '^(content-type|content-encoding|content-length)'
+          echo "$headers" | grep -qi '^content-encoding: gzip' || { echo "::error::$js is not gzip-compressed: add its Content-Type to gzip_types in nginx/nginx.conf"; exit 1; }
+
       - name: Lighthouse CI
         id: lhci
         continue-on-error: true   # the report below is produced even when a budget check fails
