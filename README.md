@@ -40,7 +40,7 @@ The site is a React single-page app served by a small Flask API. The API reads `
 
 ```mermaid
 flowchart LR
-    user(["Browser<br/>React single-page app"])
+    user(["Browser<br/>React app + its own cache"])
     cf["Cloudflare<br/>HTTPS, WAF, edge cache"]
 
     subgraph stack["docker compose / podman-compose"]
@@ -84,21 +84,26 @@ sequenceDiagram
     N->>F: forward
     F-->>R: static files from frontend/build
 
-    R->>N: GET /allmovies?start=0&end=20&genre=...&order_by=...
-    alt same URL answered during the last 60 s
-        N-->>R: 201 JSON, X-Cache-Status HIT
-    else not in the cache
-        N->>F: forward to one replica
-        alt in the worker's memory, or already in memcached
-            F->>M: get (unless it is in the worker's memory)
-            M-->>F: the stored JSON
-        else computed now
-            F->>D: filter, sort, take 20 rows
-            D-->>F: movies, total, genres
-            F->>M: set, for the other replicas
+    alt this page was fetched less than 5 minutes ago
+        R->>R: answered by the React Query cache, no request at all
+    else not in the browser's cache
+        R->>N: GET /allmovies?start=0&end=20&genre=...&order_by=...
+        alt same URL answered during the last 60 s
+            N-->>R: 201 JSON, X-Cache-Status HIT
+        else not in the cache
+            N->>F: forward to one replica
+            alt in the worker's memory, or already in memcached
+                F->>M: get (unless it is in the worker's memory)
+                M-->>F: the stored JSON
+            else computed now
+                F->>D: filter, sort, take 20 rows
+                D-->>F: movies, total, genres
+                F->>M: set, for the other replicas
+            end
+            F-->>N: 201 JSON, X-App-Cache memory, memcached or miss
+            N-->>R: 201 JSON, X-Cache-Status MISS
         end
-        F-->>N: 201 JSON, X-App-Cache memory, memcached or miss
-        N-->>R: 201 JSON, X-Cache-Status MISS
+        R->>R: keeps the answer in the React Query cache
     end
 
     U->>R: scrolls down, or changes a filter or the sort
@@ -138,14 +143,15 @@ APP_REPLICAS=4 WEB_CONCURRENCY=2 PORT=5000 docker compose up -d
 
 #### Caching
 
-The movie data is a read-only CSV, so answers can be cached safely. Four layers, from the inside out:
+The movie data is a read-only CSV, so answers can be cached safely. Five layers, from the data to the browser:
 
 | Layer | What | Details |
 |---|---|---|
 | Memory of each gunicorn worker (`backend/cache.py`) | the genre list / min year (once), then the JSON of `/statistics` by year range and of `/allmovies` pages of at most 100 movies (256 answers, least recently used first) | the fastest, but private to the worker. Big answers (e.g. the whole dataset) are never cached, to bound memory. |
 | memcached (`memcached` service) | the same JSON answers, for 1 hour | shared by **all workers of all replicas**: the first one to get a request computes the answer, the others reuse it, and it survives a restart of the app. Optional: see below. |
 | nginx (`nginx/nginx.conf`) | `/allmovies` and `/statistics` for 60 s, shared by all replicas | the `X-Cache-Status` response header says `HIT`, `MISS` or `BYPASS`. Send `X-No-Cache: 1` to skip it. |
-| Cloudflare / browser | see below | `Cache-Control` set by nginx |
+| Cloudflare | see below | `Cache-Control` set by nginx |
+| React Query, in the browser tab (`frontend/src/api.js`, `queryClient.js`) | every `/allmovies` and `/statistics` answer the page asked for | fresh for 5 minutes, kept 30. Asking again for a page already seen (same filters and sort), going back to a filter state you left, or coming back from the Statistics page costs **no request at all**. Identical requests in flight are shared. Lost when the tab is reloaded. |
 
 The `X-App-Cache` response header tells where an answer came from: `memory` (the worker), `memcached` (another worker computed it) or `miss` (computed now).
 
@@ -153,7 +159,9 @@ memcached is configured by `MEMCACHED_SERVERS` (default `memcached:11211` in `do
 
 memcached keeps its answers across restarts of the app, and the keys do not contain the version of the *code*: after changing how an answer is computed (a filter, a statistic), forget the old ones with `scripts/localcache.sh flush` (or restart the `memcached` container).
 
-A browser cannot talk to memcached (it is a TCP protocol, not HTTP), so it is used by the Flask replicas, not by the React code. The front end benefits indirectly: answers come back faster, and the browser itself keeps what `Cache-Control` allows.
+A browser cannot talk to memcached (it is a TCP protocol, not HTTP), so memcached serves the Flask replicas. The React app has its own cache in the browser instead, built on [React Query](https://tanstack.com/query) (already used for its provider in `index.js`).
+
+**The React cache.** Both pages (the movie list and the statistics) fetch through one function, `cachedGet(queryClient, url, params, signal)` in `frontend/src/api.js`. The cache key is the URL and the params compared by value (the order of the keys of `params` does not matter, the order of the items of an array does). An error or a cancelled request (the page aborts the pending request when a filter changes) is never cached. The lifetimes are set in one place, `frontend/src/queryClient.js` (`staleTime` 5 minutes, `gcTime` 30 minutes): lower `staleTime` if the data can change while a page is open. The cache lives in the memory of the tab, so a reload starts empty and the server-side layers answer instead.
 
 To load-test the replicas rather than the cache, run Locust with `NO_CACHE=1` (it sends `X-No-Cache: 1`):
 ```shell
@@ -451,14 +459,14 @@ npx playwright test --ui
 
 ### Test with docker
 
-I provided a mode  to be able to run tests through docker:
-in a terminal, enter:
+The image has a mode that runs the backend tests (pytest) inside the container. It runs in the foreground and the container's exit code is pytest's, so a failing test makes the command fail:
 
 ```shell
-docker run  --rm -it -e MODE=test -p 5000:5000 webserver --name webserver 
-
-docker logs webserver # display test logs
+docker build -t webserver .
+docker run --rm -e MODE=test webserver
+echo $?        # 0 when every test passed
 ```
+(The image has no Node.js: the frontend tests run on your machine or in CI, see above.) The CI job `docker-test` runs this, then starts the container in `MODE=serve` and checks what it serves, before load-testing it: see `CI_CD.md`.
 
 ### CI/CD
 For further information reagrding CI/CD, please visit the page ![CI_CD](./CI_CD.md)

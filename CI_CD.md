@@ -23,7 +23,7 @@ flowchart LR
 
     subgraph perf["Load tests with Locust"]
         st["stress-test<br/>ubuntu, macOS<br/>gunicorn, 100 users, 2 min"]
-        dt["docker-test<br/>builds the image, runs it,<br/>100 users, 2 min"]
+        dt["docker-test<br/>image tests, smoke test<br/>of the container, 100 users"]
     end
 
     subgraph code["Code tests"]
@@ -44,11 +44,11 @@ flowchart LR
 
 | Job | What it runs | It fails when |
 |---|---|---|
-| `unit-tests-frontend` | `npm ci`, then Jest tests of the page, the infinite scroll, the reload on filter change and the movie card | a test fails (the npm debug log is printed if `npm ci` itself fails) |
+| `unit-tests-frontend` | `npm ci`, then Jest tests of the page, the infinite scroll, the reload on filter change, the movie card and the browser-side cache (a page already seen is not requested again, a failed or cancelled request is not cached) | a test fails (the npm debug log is printed if `npm ci` itself fails) |
 | `integration-tests-frontend` | builds the React app, then Playwright drives a real browser against gunicorn: 20 cards, then 40 after scrolling, and the navigation to the statistics page | an end-to-end test fails |
 | `tests-backend` | `pytest`: the API (status, title, language and score filters), the two-level cache (against a fake memcached server) and the loader | a test fails |
 | `stress-test` | gunicorn started locally, then Locust for 2 minutes with 100 users | any request is not a `201` with the expected JSON key (Locust then exits with code 1) |
-| `docker-test` | builds the Docker image, runs it, runs Locust against the container, then starts the image's own test mode | the build fails or a Locust request fails (the test-mode run is started but its result is not checked yet) |
+| `docker-test` | builds the Docker image, then (1) runs the image's own tests (`MODE=test`, in the foreground, so a failing test fails the job), (2) starts the container and waits until it answers, (3) smoke-tests it: the React build and its JavaScript are served, the API answers `201`, a language filter and a sort are really applied, the cache answers `miss` then `memory`, the process is not root and gunicorn uses the threaded workers, (4) load-tests it with Locust (100 users, 2 minutes) | the image does not build, a test fails, a smoke check fails, or a Locust request fails |
 | `scalability-test` | see the diagram below | a step fails, or a replica received no request |
 | `cloudflare-quick-tunnel-test` | 4 replicas behind a temporary `trycloudflare.com` URL (no account needed), Locust through it, every replica must have received requests | same as above |
 | `cloudflare-test` | the same through your own tunnel and domain. Skipped unless the repository has the `CLOUDFLARE_TUNNEL_TOKEN` secret and the `CLOUDFLARE_URL` variable, and on pull requests from forks | a load-test request fails |
