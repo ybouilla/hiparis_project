@@ -9,7 +9,7 @@
 # Open http://localhost:5000 (PORT to change it).
 #
 # Hardening of every service: non-root user, all Linux capabilities dropped, no-new-privileges.
-# app, nginx and db also get a read-only root filesystem; only the tmpfs mounts (and db's
+# app, nginx, memcached and db also get a read-only root filesystem; only the tmpfs mounts (and db's
 # data volume) are writable. Optional parts: --profile cloudflare, --profile db.
 # Optional PostgreSQL warehouse (profile "db"), not used by the web app yet:
 #   docker compose --profile db up -d db       # start the database
@@ -26,6 +26,11 @@ services:
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       # Extra gunicorn flags, e.g. "--access-logfile -" to log every request.
       GUNICORN_CMD_ARGS: ${GUNICORN_CMD_ARGS:-}
+      # Answers are also cached in memcached, shared by all workers and replicas (backend/cache.py).
+      # Set it to "off" to use only the cache in each worker's memory. The app works without memcached.
+      MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
+    depends_on:
+      - memcached
     # No `ports:` and no `container_name:` -- both would prevent scaling.
     # Replicas are only reachable by nginx through the network's internal DNS.
     expose:
@@ -61,6 +66,22 @@ services:
           pids: 512                   # same as pids_limit above
         reservations:
           memory: 128M
+
+  # Cache shared by all the app replicas. No `ports:` on purpose: memcached has no authentication,
+  # so it is only reachable from the other containers of this compose project.
+  memcached:
+    image: docker.io/library/memcached:1.6-alpine
+    command: ["memcached", "-m", "64", "-c", "1024", "-t", "2"]   # 64 MB of cache, 1024 connections, 2 threads
+    expose:
+      - "11211"
+    read_only: true                   # the official image already runs as the unprivileged "memcache" user
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 128m
+    restart: unless-stopped
 
   nginx:
     image: docker.io/nginxinc/nginx-unprivileged:1.27-alpine

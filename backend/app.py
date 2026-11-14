@@ -4,12 +4,13 @@ from math import floor
 import functools
 import sys
 import tempfile
-from flask import Flask, jsonify, request, redirect
+from flask import Flask, Response, jsonify, request, redirect
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
 import os
 import pandas as pd
-from backend.load_csv import load_csv
+from backend.cache import build_cache
+from backend.load_csv import MOVIE_FILE, load_csv
 
 
 
@@ -47,6 +48,31 @@ def _dataset_info():
 # Pages of at most this many movies are cached; bigger answers (e.g. the whole
 # dataset) are not, to keep the memory used by the cache bounded.
 MAX_CACHED_PAGE_SIZE = 100
+
+
+def _data_version():
+	"""Identifies the content of movies.csv; part of every cache key."""
+	try:
+		stat = os.stat(MOVIE_FILE)
+		return f"{stat.st_size}-{int(stat.st_mtime)}"
+	except OSError:
+		return "unknown"
+
+
+# In-process LRU, plus memcached when MEMCACHED_SERVERS is set (see backend/cache.py).
+_cache = build_cache(_data_version())
+
+
+def _cached_response(kind, args, compute):
+	"""Answer 201 with the JSON of `compute()` (a dict), going through the two-level cache.
+	The X-App-Cache header says where the body came from: memory, memcached or miss."""
+	def render():
+		return app.json.response(compute()).get_data()   # same bytes as jsonify(...)
+
+	body, layer = _cache.get_or_compute(_cache.key(kind, args), render)
+	response = Response(body, status=201, mimetype="application/json")
+	response.headers["X-App-Cache"] = layer
+	return response
 
 
 def _query_movies(n_start, n_end, title, genre, language, min_rate, dates, order_by, order_desc):
@@ -111,9 +137,6 @@ def _query_movies(n_start, n_end, title, genre, language, min_rate, dates, order
 	return resp
 
 
-_query_movies_cached = functools.lru_cache(maxsize=256)(_query_movies)
-
-
 @app.route('/allmovies', methods=['GET'])
 def serve_movies():
 	"""
@@ -148,10 +171,10 @@ def serve_movies():
 		request.args.get("order_by"),
 		request.args.get("order_desc", "asc"),
 	)
-	query = _query_movies_cached if n_end - n_start <= MAX_CACHED_PAGE_SIZE else _query_movies
-	return jsonify(query(*args)), 201
+	if n_end - n_start <= MAX_CACHED_PAGE_SIZE:
+		return _cached_response("allmovies", args, lambda: _query_movies(*args))
+	return jsonify(_query_movies(*args)), 201      # big answers are not cached
 
-@functools.lru_cache(maxsize=128)
 def _compute_stats(dates):
 	"""Statistics for a release-year range (`dates` is a tuple, so results are cacheable)."""
 	df = load_csv()
@@ -228,7 +251,8 @@ def _compute_stats(dates):
 def serve_stats():
 	# tests : curl http://127.0.0.1:5000/statistics
 	# curl http://127.0.0.1:5000/statistics?dates=1990&dates=2020
-	return jsonify(_compute_stats(tuple(request.args.getlist("dates")))), 201
+	dates = tuple(request.args.getlist("dates"))
+	return _cached_response("statistics", dates, lambda: _compute_stats(dates))
 
 @app.route('/')
 def index():

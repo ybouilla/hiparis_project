@@ -1,8 +1,9 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
 import axios from 'axios';
 
 import App from './App';
+import { renderWithClient } from './testUtils';
 
 jest.mock('axios', () => ({
   get: jest.fn(),
@@ -36,7 +37,7 @@ beforeEach(() => {
 test('refetches movies with updated params when a filter changes', async () => {
   axios.get.mockResolvedValue(mockResponse());
 
-  render(<App />);
+  renderWithClient(<App />);
 
   await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
   expect(axios.get.mock.calls[0][1].params.genre).toEqual([]);
@@ -52,7 +53,7 @@ test('aborts the in-flight request when a filter changes before it resolves', as
   // Never resolves, so the first request is still pending when the filter changes.
   axios.get.mockImplementation(() => new Promise(() => {}));
 
-  render(<App />);
+  renderWithClient(<App />);
 
   await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
   const firstSignal = axios.get.mock.calls[0][1].signal;
