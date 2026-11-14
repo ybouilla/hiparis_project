@@ -351,6 +351,29 @@ GROUP BY d.decade ORDER BY d.decade;
 Tests: the dbt tests run as part of `dbt build`; the loader has `pytest etl/tests` (its database test runs only if `TEST_DATABASE_URL` points to a PostgreSQL database that may be overwritten). CI job `etl-test` runs both against a PostgreSQL container, running the pipeline twice.
 
 
+## Front-end performance
+
+### Bundle size
+
+`scripts/bundle_report.py` shows which packages the JavaScript bundles are made of (it reads the source maps of the build, no dependency to install):
+
+```shell
+cd frontend && npm run build && cd ..
+python scripts/bundle_report.py --top 15
+```
+
+It found that **one package, `react-world-flags`, was 64 % of the main bundle**: it inlines the flags of all 256 countries (3.7 MB) to show at most 27 in the language dropdown. The charting libraries (echarts, recharts) were the second cost. What changed:
+
+| | before | after |
+|---|---|---|
+| `main.js`, minified | 5,911 KB | **654 KB** |
+| `main.js`, gzipped (what nginx sends) | 1,891 KB | **201 KB** |
+| the home page downloads | 1 file of 5.9 MB, charts and 256 flags included | 654 KB of JavaScript and 1 KB of CSS; no chart code, no flag |
+
+- **Flags** are 27 small SVG files in `frontend/public/flags/` (one per country of `languages.json`, 94 KB together), displayed by `src/Flag.js`. The browser downloads one only when it is shown, i.e. when the dropdown is opened. Adding a language: copy its country's SVG there (a test checks it).
+- **The statistics page** is a separate chunk (`React.lazy` in `src/AppRoutes.js`, 476 KB gzipped, with echarts and recharts), downloaded when the page is opened. It starts downloading as soon as the pointer or the keyboard reaches the "Movies Statistics" link, so the click itself does not wait.
+- The statistics chunk still contains two charting libraries (echarts for the box plots, recharts for the rest). Keeping only one would shrink it further.
+
 ## Example of usage:
 
 ### How to use it? 

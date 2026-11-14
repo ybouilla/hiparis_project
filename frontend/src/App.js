@@ -70,6 +70,9 @@ const moviesData = [
   }
 ]
 const PAGE_SIZE = 20;
+// The statistics page is a separate chunk (see AppRoutes.js): fetch it as soon as the user
+// shows interest in it, so that clicking the link does not wait for the download.
+const preloadStatistics = () => import("./MovieGraph");
 const min_dates = 1900;
 const DRAWER_WIDTH = 280;
 const DEFAULT_YEAR_RANGE = [1900, 2026];
@@ -408,7 +411,8 @@ useEffect(() => {
             <Button color="inherit" component={Link} to="/" aria-current="page" sx={{ bgcolor: "rgba(255,255,255,0.18)" }}>
               <strong>Movie</strong>
             </Button>
-            <Button color="inherit" component={Link} to="/statistics">
+            <Button color="inherit" component={Link} to="/statistics"
+              onMouseEnter={preloadStatistics} onFocus={preloadStatistics}>
               <strong>Movies Statistics</strong>
             </Button>
           </Box>

@@ -1,12 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createQueryClient } from './queryClient';
 import './index.css';
-import App from './App';
-import MovieGraph from "./MovieGraph";
-import NotFound from './NotFound';
+import AppRoutes from './AppRoutes';
 
 import reportWebVitals from './reportWebVitals';
 
@@ -16,11 +14,7 @@ const queryClient = createQueryClient();
 root.render(
   <QueryClientProvider client={queryClient}>
     <BrowserRouter>
-      <Routes>
-                <Route path="/" element={<App />}/>
-                <Route path="/statistics" element={<MovieGraph  />} />
-                <Route path="*" element={<NotFound />} />
-        </Routes>
+      <AppRoutes />
       
     </BrowserRouter>
   </QueryClientProvider>
