@@ -40,7 +40,7 @@ The site is a React single-page app served by a small Flask API. The API reads `
 
 ```mermaid
 flowchart LR
-    user(["Browser<br/>React single-page app"])
+    user(["Browser<br/>React app + its own cache"])
     cf["Cloudflare<br/>HTTPS, WAF, edge cache"]
 
     subgraph stack["docker compose / podman-compose"]
@@ -49,6 +49,7 @@ flowchart LR
             app1["gunicorn + Flask<br/>replica 1<br/>movies.csv in memory"]
             app2["gunicorn + Flask<br/>replica N<br/>movies.csv in memory"]
         end
+        mc[("memcached<br/>64 MB, shared answers")]
     end
 
     user -->|"http://localhost:5000"| nginx
@@ -56,6 +57,8 @@ flowchart LR
     cf -.->|"tunnel"| nginx
     nginx -->|"each request goes to one replica"| app1
     nginx --> app2
+    app1 <-->|"answers"| mc
+    app2 <-->|"answers"| mc
 
     subgraph optional["optional data warehouse, not used by the site yet"]
         csv[("movies.csv")] -->|"python loader"| raw[("PostgreSQL<br/>raw.movies")]
@@ -63,7 +66,7 @@ flowchart LR
     end
 ```
 
-nginx is the only entry point. It finds the replicas through the network's DNS name `app` (so scaling up or down needs no reload) and answers repeated `/allmovies` and `/statistics` requests from its own cache. Cloudflare and the PostgreSQL pipeline are optional.
+nginx is the only entry point. It finds the replicas through the network's DNS name `app` (so scaling up or down needs no reload) and answers repeated `/allmovies` and `/statistics` requests from its own cache. The replicas share the answers they compute through memcached. Cloudflare and the PostgreSQL pipeline are optional.
 
 ### What happens when you browse
 
@@ -73,6 +76,7 @@ sequenceDiagram
     participant R as React app
     participant N as nginx
     participant F as Flask replica
+    participant M as memcached
     participant D as DataFrame in memory
 
     U->>R: opens the site
@@ -80,45 +84,34 @@ sequenceDiagram
     N->>F: forward
     F-->>R: static files from frontend/build
 
-    R->>N: GET /allmovies?start=0&end=20&genre=...&order_by=...
-    alt same URL answered during the last 60 s
-        N-->>R: 201 JSON, X-Cache-Status HIT
-    else not in the cache
-        N->>F: forward to one replica
-        F->>D: filter, sort, take 20 rows
-        D-->>F: movies, total, genres
-        F-->>N: 201 JSON
-        N-->>R: 201 JSON, X-Cache-Status MISS
+    alt this page was fetched less than 5 minutes ago
+        R->>R: answered by the React Query cache, no request at all
+    else not in the browser's cache
+        R->>N: GET /allmovies?start=0&end=20&genre=...&order_by=...
+        alt same URL answered during the last 60 s
+            N-->>R: 201 JSON, X-Cache-Status HIT
+        else not in the cache
+            N->>F: forward to one replica
+            alt in the worker's memory, or already in memcached
+                F->>M: get (unless it is in the worker's memory)
+                M-->>F: the stored JSON
+            else computed now
+                F->>D: filter, sort, take 20 rows
+                D-->>F: movies, total, genres
+                F->>M: set, for the other replicas
+            end
+            F-->>N: 201 JSON, X-App-Cache memory, memcached or miss
+            N-->>R: 201 JSON, X-Cache-Status MISS
+        end
+        R->>R: keeps the answer in the React Query cache
     end
 
     U->>R: scrolls down, or changes a filter or the sort
     R->>R: scroll: ask for the next page. Filter: abort the pending request, empty the list
     R->>N: GET /allmovies?start=20&end=40&...
 ```
-
-### Inside the page
-
-```mermaid
-flowchart TD
-    filters["Filters: search, genres, language,<br/>minimum rating, years, sort"] --> debounce["the search text is debounced 300 ms"]
-    debounce --> reload["reload: abort the pending request,<br/>empty the list"]
-    reload --> page1["GET /allmovies, page 1 (20 movies)"]
-    page1 --> cards["cards in grid or list view,<br/>skeletons while loading"]
-    page1 -->|"no result"| empty["empty state with Clear all filters"]
-    cards -->|"bottom sentinel enters the viewport"| next["GET /allmovies, next page"]
-    next --> cards
-    next -->|"no more results"| finish["End of results"]
-    cards -->|"top sentinel enters the viewport"| prev["load the previous page"]
-    prev --> cards
-```
-
-| Route | Purpose | Parameters |
-|---|---|---|
-| `GET /` | the React app (`frontend/build`) | |
-| `GET /allmovies` | a page of movies, plus total, genre list and maxima | `start`, `end`, `title`, `genre` (repeatable), `lang`, `score`, `dates` (twice), `order_by`, `order_desc` |
-| `GET /statistics` | quartiles and counts by language and genre for the charts page | `dates` (twice) |
-
-Both API routes answer `201` with JSON. The `/statistics` page of the app draws its charts from that answer.
+### Web description
+See ![web_descr](./web_description.md) for further information.
 
 ## Deploy
 
@@ -150,19 +143,31 @@ APP_REPLICAS=4 WEB_CONCURRENCY=2 PORT=5000 docker compose up -d
 
 #### Caching
 
-The movie data is a read-only CSV, so answers can be cached safely. Three layers, from the inside out:
+The movie data is a read-only CSV, so answers can be cached safely. Five layers, from the data to the browser:
 
 | Layer | What | Details |
 |---|---|---|
-| Flask app (`backend/app.py`) | genre list / min year (once per worker), `/statistics` by year range, `/allmovies` pages of at most 100 movies (`lru_cache`) | per worker, so it also works without nginx. Big answers (e.g. the whole dataset) are not cached to bound memory. |
+| Memory of each gunicorn worker (`backend/cache.py`) | the genre list / min year (once), then the JSON of `/statistics` by year range and of `/allmovies` pages of at most 100 movies (256 answers, least recently used first) | the fastest, but private to the worker. Big answers (e.g. the whole dataset) are never cached, to bound memory. |
+| memcached (`memcached` service) | the same JSON answers, for 1 hour | shared by **all workers of all replicas**: the first one to get a request computes the answer, the others reuse it, and it survives a restart of the app. Optional: see below. |
 | nginx (`nginx/nginx.conf`) | `/allmovies` and `/statistics` for 60 s, shared by all replicas | the `X-Cache-Status` response header says `HIT`, `MISS` or `BYPASS`. Send `X-No-Cache: 1` to skip it. |
-| Cloudflare / browser | see below | `Cache-Control` set by nginx |
+| Cloudflare | see below | `Cache-Control` set by nginx |
+| React Query, in the browser tab (`frontend/src/api.js`, `queryClient.js`) | every `/allmovies` and `/statistics` answer the page asked for | fresh for 5 minutes, kept 30. Asking again for a page already seen (same filters and sort), going back to a filter state you left, or coming back from the Statistics page costs **no request at all**. Identical requests in flight are shared. Lost when the tab is reloaded. |
+
+The `X-App-Cache` response header tells where an answer came from: `memory` (the worker), `memcached` (another worker computed it) or `miss` (computed now).
+
+memcached is configured by `MEMCACHED_SERVERS` (default `memcached:11211` in `docker-compose.yml`; several servers can be listed, separated by commas) and `MEMCACHED_TTL` (seconds, default 3600). Set `MEMCACHED_SERVERS=off`, or leave it unset (the default when you run gunicorn yourself), to use only the cache in each worker's memory: the app never needs memcached. If memcached is down or slow, the answer is simply computed, and memcached is not tried again for 10 seconds. The data version (size and date of `movies.csv`) is part of every key, so a new CSV never gets answers computed from the old one. To use it without Docker, see "With memcached" under "Deploy without docker".
+
+memcached keeps its answers across restarts of the app, and the keys do not contain the version of the *code*: after changing how an answer is computed (a filter, a statistic), forget the old ones with `scripts/localcache.sh flush` (or restart the `memcached` container).
+
+A browser cannot talk to memcached (it is a TCP protocol, not HTTP), so memcached serves the Flask replicas. The React app has its own cache in the browser instead, built on [React Query](https://tanstack.com/query) (already used for its provider in `index.js`).
+
+**The React cache.** Both pages (the movie list and the statistics) fetch through one function, `cachedGet(queryClient, url, params, signal)` in `frontend/src/api.js`. The cache key is the URL and the params compared by value (the order of the keys of `params` does not matter, the order of the items of an array does). An error or a cancelled request (the page aborts the pending request when a filter changes) is never cached. The lifetimes are set in one place, `frontend/src/queryClient.js` (`staleTime` 5 minutes, `gcTime` 30 minutes): lower `staleTime` if the data can change while a page is open. The cache lives in the memory of the tab, so a reload starts empty and the server-side layers answer instead.
 
 To load-test the replicas rather than the cache, run Locust with `NO_CACHE=1` (it sends `X-No-Cache: 1`):
 ```shell
 NO_CACHE=1 locust -f backend/performance/locustfile.py --host=http://localhost:5000 --headless -u 100 -t 1m
 ```
-Caches are emptied when the app / nginx container is recreated, e.g. after a redeploy.
+The memory caches and nginx's cache are emptied when their container is recreated, e.g. after a redeploy (memcached too, as it has no volume).
 
 #### Security hardening
 
@@ -170,12 +175,12 @@ The containers are locked down (`docker-compose.yml`, `Dockerfile`):
 
 | Measure | Where |
 |---|---|
-| Runs as a non-root user: uid 10001 for the app and the pipeline, uid 101 for nginx (the `nginx-unprivileged` image, listening on port 8080), uid 70 for PostgreSQL | every service |
+| Runs as a non-root user: uid 10001 for the app and the pipeline, uid 101 for nginx (the `nginx-unprivileged` image, listening on port 8080), uid 70 for PostgreSQL, the image's `memcache` user for memcached | every service |
 | All Linux capabilities dropped (`cap_drop: ALL`) and `no-new-privileges` | every service |
-| Read-only root filesystem; only small `tmpfs` mounts are writable: `/tmp`, nginx's generated config and its response cache (`/var/cache/nginx`, in memory), PostgreSQL's socket directory (and its data volume) | `app`, `nginx`, `db` |
-| Cap on the number of processes; memory limit | `app`, `nginx`, `db` (processes); `app` (memory) |
+| Read-only root filesystem; only small `tmpfs` mounts are writable: `/tmp`, nginx's generated config and its response cache (`/var/cache/nginx`, in memory), PostgreSQL's socket directory (and its data volume) | `app`, `nginx`, `memcached`, `db` |
+| Cap on the number of processes; memory limit | `app`, `nginx`, `memcached`, `db` (processes); `app`, `memcached` (memory) |
 | Fully qualified image names (`docker.io/...`), so the registry is never guessed | all images |
-| The database port is published on `127.0.0.1` only | `db` |
+| The database port is published on `127.0.0.1` only; memcached (no authentication) publishes no port at all, only the other containers can reach it | `db`, `memcached` |
 
 #### Podman (rootless)
 
@@ -240,6 +245,30 @@ gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
 ```
 Then open the application in your web browser: http://localhost:5000
 If it does not work, try to open it from an incognito browser window
+
+#### With memcached (optional)
+
+Run like this, each gunicorn worker only has the cache in its own memory. To share the answers between the workers, and keep them across restarts, run memcached too. `scripts/localcache.sh` starts a private one for you: no Docker, no root, listening on `127.0.0.1` only.
+
+```shell
+sudo apt install memcached                # once (macOS: brew install memcached); only the program is needed
+WEB_CONCURRENCY=2 scripts/localcache.sh run gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
+```
+`run` starts memcached if needed, sets `MEMCACHED_SERVERS`, then runs the command you give it (it works the same with `flask`: see "Debug"). The other commands:
+
+```shell
+scripts/localcache.sh stats      # items, memory, hit rate
+scripts/localcache.sh flush      # forget every cached answer
+scripts/localcache.sh status
+scripts/localcache.sh stop       # memcached keeps running after the app stops, until you do this
+eval "$(scripts/localcache.sh env)"   # to set MEMCACHED_SERVERS in your shell instead of using `run`
+```
+On Debian and Ubuntu the `memcached` package also starts a system memcached on `127.0.0.1:11211`. The script then uses that one (and never stops it); if you prefer a separate private one, use another port: `MEMCACHED_PORT=11311`. Memory defaults to 64 MB (`MEMCACHED_MEMORY`). Windows: use WSL.
+
+To see it work, ask for the same page twice and look at the `X-App-Cache` header (`memory` for the worker's own cache, `memcached` when another worker computed it):
+```shell
+curl -si "http://localhost:5000/allmovies?start=0&end=20" | grep -i x-app-cache
+```
 
 ## Data warehouse (PostgreSQL, star schema)
 
@@ -360,6 +389,7 @@ for debugging or switching to development mode
 cd backend
 flask --app app.py --debug run
 ```
+  (with memcached: `../scripts/localcache.sh run flask --app app.py --debug run`, then `../scripts/localcache.sh flush` after changing how an answer is computed)
 * **for frontend**:
 
 ```shell
@@ -429,14 +459,14 @@ npx playwright test --ui
 
 ### Test with docker
 
-I provided a mode  to be able to run tests through docker:
-in a terminal, enter:
+The image has a mode that runs the backend tests (pytest) inside the container. It runs in the foreground and the container's exit code is pytest's, so a failing test makes the command fail:
 
 ```shell
-docker run  --rm -it -e MODE=test -p 5000:5000 webserver --name webserver 
-
-docker logs webserver # display test logs
+docker build -t webserver .
+docker run --rm -e MODE=test webserver
+echo $?        # 0 when every test passed
 ```
+(The image has no Node.js: the frontend tests run on your machine or in CI, see above.) The CI job `docker-test` runs this, then starts the container in `MODE=serve` and checks what it serves, before load-testing it: see `CI_CD.md`.
 
 ### CI/CD
 For further information reagrding CI/CD, please visit the page ![CI_CD](./CI_CD.md)

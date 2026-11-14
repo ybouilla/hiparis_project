@@ -1,9 +1,10 @@
 import React from 'react';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { screen, waitFor, act } from '@testing-library/react';
 import axios from 'axios';
 
 import App from './App';
 import { handleIntersection } from './utils/handleIntersection';
+import { renderWithClient } from './testUtils';
 
 jest.mock('axios', () => ({
   get: jest.fn(),
@@ -80,7 +81,7 @@ function getTopSentinelObserver(container) {
 test('passes current ref state and the first loaded page to handleIntersection on intersection', async () => {
   axios.get.mockResolvedValue(mockResponse());
 
-  const { container } = render(<App />);
+  const { container } = renderWithClient(<App />);
 
   await waitFor(() => expect(screen.getByText('3')).toBeInTheDocument());
 
@@ -107,7 +108,7 @@ test('does not fetch an extra page when the top sentinel intersects at the first
 
   axios.get.mockResolvedValue(mockResponse());
 
-  const { container } = render(<App />);
+  const { container } = renderWithClient(<App />);
 
   await waitFor(() => expect(screen.getByText('3')).toBeInTheDocument());
   expect(axios.get).toHaveBeenCalledTimes(1);

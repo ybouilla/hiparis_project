@@ -1,7 +1,8 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 
 import App from './App';
+import { renderWithClient } from './testUtils';
 
 
 jest.mock("react-router-dom", () => {
@@ -14,7 +15,7 @@ jest.mock("react-router-dom", () => {
 }, { virtual: true });
 
 test('renders the movie explorer title', () => {
-  render(<App />);
+  renderWithClient(<App />);
   const titleElement = screen.getByText(/Movie Explorer/i);
   expect(titleElement).toBeInTheDocument();
 });

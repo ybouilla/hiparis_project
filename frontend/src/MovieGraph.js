@@ -42,8 +42,8 @@ import {
 } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
 
-import axios from 'axios';
-import qs from 'qs';
+import { useQueryClient } from "@tanstack/react-query";
+import { cachedGet } from "./api";
 import { Link, } from "react-router-dom";
 import CustomTooltip from "./CustomTooltip";
 import MovieScatterChart from "./MovieScatterChart";
@@ -189,6 +189,7 @@ const exBoxplotStats = {'min': 0,
 }
 
 function MovieGraph() {
+  const queryClient = useQueryClient();
 
   const min_date = 1940;
    const [movies2, setMovies2] = useState([] );
@@ -257,60 +258,35 @@ const dislayYAxis = (points, isReqNormalized)=> {
   const collectMovies = async (e) => {
       //e.preventDefault();
       try {
-        const [moviesResponse, statsResponse] = await Promise.all([
-        await axios.get('/allmovies',  {
-          
-          params: {
-                   "start": 0,
-                   "end": 500,      
-                  "dates": yearRange2,
+        // through the React Query cache (shared with the movie list): moving the year slider back to
+        // a range already seen, or coming back to this page, costs no request
+        const [moviesData, statsData] = await Promise.all([
+          cachedGet(queryClient, '/allmovies', { "start": 0, "end": 500, "dates": yearRange2 }),
+          cachedGet(queryClient, '/statistics', { "dates": yearRange2 }),
+        ]);
 
-                },
-          headers: {
-            // No need to set 'Content-Type', axios will do it for us
-          },
-           paramsSerializer: (params) =>
-            qs.stringify(params, { arrayFormat: "repeat" })
-        }),
-        
-        axios.get("/statistics", {
-          params: {
-                       
-                  "dates": yearRange2,
-
-                },
-          headers: {
-            // No need to set 'Content-Type', axios will do it for us
-          },
-           paramsSerializer: (params) =>
-            qs.stringify(params, { arrayFormat: "repeat" })
-    
-        }),
-         ]);
-        console.log('got response', moviesResponse)
-
-        setMovies2(Array.isArray(moviesResponse.data.movies)
-                  ? moviesResponse.data.movies
-                  : Array.isArray(moviesResponse.data)
-                  ? moviesResponse.data
+        setMovies2(Array.isArray(moviesData.movies)
+                  ? moviesData.movies
+                  : Array.isArray(moviesData)
+                  ? moviesData
                   : [])
-        setTotalMovies2(moviesResponse.data.total_movies);
+        setTotalMovies2(moviesData.total_movies);
         //setMinDate(request.data.min_date)
         
-        setMinDate2(moviesResponse.data.min_date)
-        setMaxVal(moviesResponse.data.max_val)
+        setMinDate2(moviesData.min_date)
+        setMaxVal(moviesData.max_val)
 
         // stats
-        setStats({"Popularity": statsResponse.data.stats_pop,
-          "Vote_Count": statsResponse.data.stats_vote_count,
-          "Vote_Average": statsResponse.data.stats_vote_avg}
+        setStats({"Popularity": statsData.stats_pop,
+          "Vote_Count": statsData.stats_vote_count,
+          "Vote_Average": statsData.stats_vote_avg}
         )
-          const genreData = Object.entries(statsResponse.data.stats_genre).map(([genre, count]) => ({
+          const genreData = Object.entries(statsData.stats_genre).map(([genre, count]) => ({
         genre,
         count,
       }));
 
-      const LanguageData= Object.entries(statsResponse.data.stats_countries).map(([country, count]) => ({
+      const LanguageData= Object.entries(statsData.stats_countries).map(([country, count]) => ({
             country,
             count,
           })).filter((item) => item.count>5); // select only countries with more than 5 movies
