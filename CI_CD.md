@@ -2,11 +2,11 @@
 
 CI CD mainly executes unit tests, as well as end to end tests using differents setups and environments, and for stress tests. 
 
-`.github/workflows/build_test.yml` runs on every push and pull request to `dev` and `master`. It has 13 jobs with no dependency between them, so they all start at the same time (some run on several operating systems).
+`.github/workflows/build_test.yml` runs on every push and pull request to `dev` and `master`. It has 14 jobs with no dependency between them, so they all start at the same time (some run on several operating systems).
 
 ```mermaid
 flowchart LR
-    trigger(["push or pull request<br/>to dev / master"]) --> gha["GitHub Actions<br/>13 independent jobs, in parallel"]
+    trigger(["push or pull request<br/>to dev / master"]) --> gha["GitHub Actions<br/>14 independent jobs, in parallel"]
 
     subgraph data["Data pipeline"]
         et["etl-test<br/>PostgreSQL service container:<br/>loader tests, pipeline twice, dbt tests"]
@@ -17,6 +17,7 @@ flowchart LR
     subgraph deploy["The whole stack"]
         sc["scalability-test<br/>compose: 2 then 4 replicas,<br/>cache check, load test"]
         qt["cloudflare-quick-tunnel-test<br/>same test through a<br/>temporary Cloudflare tunnel"]
+        lh["lighthouse-test<br/>Lighthouse CI on the stack:<br/>scores, script-size limit,<br/>comment on the PR"]
         ct["cloudflare-test<br/>your own tunnel and domain,<br/>skipped without secrets"]
         pt["podman-test<br/>rootless Podman, non-blocking"]
     end
@@ -28,7 +29,7 @@ flowchart LR
 
     subgraph code["Code tests"]
         ut["unit-tests-frontend<br/>ubuntu, macOS, Windows<br/>Jest + Testing Library"]
-        it["integration-tests-frontend<br/>ubuntu, macOS<br/>build, then Playwright end-to-end<br/>against a real gunicorn"]
+        it["integration-tests-frontend<br/>ubuntu, macOS<br/>build, then Playwright end-to-end<br/>and size budget, real gunicorn"]
         bt["tests-backend<br/>ubuntu, macOS<br/>pytest: API, cache, loader"]
         lc["local-cache-test<br/>app run locally with memcached<br/>(scripts/localcache.sh)"]
     end
@@ -37,15 +38,16 @@ flowchart LR
     gha --> deploy
     gha --> perf
     gha --> code
-    sc --> reports["Locust HTML reports<br/>(downloadable artifacts)"]
+    sc --> reports["HTML reports<br/>(Locust, Lighthouse)<br/>downloadable artifacts"]
     qt --> reports
     ct --> reports
+    lh --> reports
 ```
 
 | Job | What it runs | It fails when |
 |---|---|---|
 | `unit-tests-frontend` | `npm ci`, then Jest tests of the page, the infinite scroll, the reload on filter change, the movie card and the browser-side cache (a page already seen is not requested again, a failed or cancelled request is not cached) | a test fails (the npm debug log is printed if `npm ci` itself fails) |
-| `integration-tests-frontend` | builds the React app, then Playwright drives a real browser against gunicorn: 20 cards, then 40 after scrolling, and the navigation to the statistics page | an end-to-end test fails |
+| `integration-tests-frontend` | builds the React app, then Playwright drives a real browser against gunicorn: 20 cards, then 40 after scrolling, and the navigation to the statistics page. It also checks the **size budget** (`budget.spec.js`): gzipped JavaScript, requests and flag files of the home page, and the extra download of the statistics page (the charts must be a separate, lazy chunk); the table goes to the job summary | an end-to-end test fails, or a page downloads more than its limit in `frontend/performance-budget.json` |
 | `tests-backend` | `pytest`: the API (status, title, language and score filters), the two-level cache (against a fake memcached server) and the loader | a test fails |
 | `stress-test` | gunicorn started locally, then Locust for 2 minutes with 100 users | any request is not a `201` with the expected JSON key (Locust then exits with code 1) |
 | `docker-test` | builds the Docker image, then (1) runs the image's own tests (`MODE=test`, in the foreground, so a failing test fails the job), (2) starts the container and waits until it answers, (3) smoke-tests it: the React build and its JavaScript are served, the API answers `201`, a language filter and a sort are really applied, the cache answers `miss` then `memory`, the process is not root and gunicorn uses the threaded workers, (4) load-tests it with Locust (100 users, 2 minutes) | the image does not build, a test fails, a smoke check fails, or a Locust request fails |
@@ -54,6 +56,7 @@ flowchart LR
 | `cloudflare-test` | the same through your own tunnel and domain. Skipped unless the repository has the `CLOUDFLARE_TUNNEL_TOKEN` secret and the `CLOUDFLARE_URL` variable, and on pull requests from forks | a load-test request fails |
 | `podman-test` | the stack on rootless Podman: it starts, the API answers, nginx's cache and memcached work, the containers do not run as root | a step fails (the job does not block the others yet: `continue-on-error`) |
 | `etl-test` | PostgreSQL as a service container: loader tests, then the pipeline twice (load `raw.movies`, then `dbt build` with its tests), then checks on the warehouse | a test, a dbt model or a dbt test fails |
+| `lighthouse-test` | the whole stack with `docker compose`, then Lighthouse CI 3 times on the home page (`frontend/lighthouserc.json`). The report (scores, timings, downloads, failing accessibility checks, biggest savings) goes to the job summary, to the `lighthouse-reports` artifact and, on pull requests, to a comment (not for forks) | the JavaScript downloaded exceeds 270 KB (scores and timings are only warnings) |
 | `local-cache-test` | memcached installed with `apt` and started by `scripts/localcache.sh` (no Docker), the app run locally with 2 gunicorn workers: the same URL 16 times must give one `miss` and answers from `memcached`, and `stats` must show cached items | a step fails, or no answer comes from memcached |
 | `local-db-test` | the same pipeline against the private PostgreSQL started by `scripts/localdb.sh` (no Docker) | the pipeline or the final row count fails |
 | `podman-db-test` | the database profile on rootless Podman | non-blocking, like `podman-test` |
