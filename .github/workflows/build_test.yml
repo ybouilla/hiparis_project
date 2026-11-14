@@ -400,25 +400,45 @@ jobs:
         run: docker compose up -d --build --wait
 
       - name: Open quick tunnel to nginx
+        id: tunnel
+        # Cloudflare rate-limits account-less tunnels (HTTP 429), often on GitHub's shared runner IPs,
+        # and gives no uptime guarantee. So: retry with a growing pause, and if Cloudflare still refuses,
+        # skip the rest of this job with a warning instead of failing the pull request for a third party.
         run: |
-          # host network: reach nginx on the port compose publishes (5000).
-          # http2 instead of the default QUIC, in case UDP is filtered.
-          docker run -d --name cf-quick --network host cloudflare/cloudflared:latest \
-            tunnel --no-autoupdate --protocol http2 --url http://localhost:5000
-          for i in $(seq 1 30); do
-            url=$(docker logs cf-quick 2>&1 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | head -1 || true)
+          url=""
+          for attempt in 1 2 3 4 5; do
+            docker rm -f cf-quick >/dev/null 2>&1 || true
+            # host network: reach nginx on the port compose publishes (5000).
+            # http2 instead of the default QUIC, in case UDP is filtered.
+            docker run -d --name cf-quick --network host cloudflare/cloudflared:latest \
+              tunnel --no-autoupdate --protocol http2 --url http://localhost:5000 >/dev/null
+            for i in $(seq 1 15); do
+              url=$(docker logs cf-quick 2>&1 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | head -1 || true)
+              [ -n "$url" ] && break
+              docker logs cf-quick 2>&1 | grep -q 'provisioning failed' && break
+              sleep 2
+            done
             [ -n "$url" ] && break
-            sleep 2
+            echo "attempt $attempt: no tunnel ($(docker logs cf-quick 2>&1 | grep -o 'provisioning failed.*' | head -1))"
+            sleep $((attempt * 20))
           done
-          test -n "$url" || { echo "::error::no trycloudflare URL found"; docker logs cf-quick; exit 1; }
-          echo "Tunnel URL: $url"
-          echo "TUNNEL_URL=$url" >> "$GITHUB_ENV"
+          if [ -n "$url" ]; then
+            echo "Tunnel URL: $url"
+            echo "TUNNEL_URL=$url" >> "$GITHUB_ENV"
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Cloudflare did not give a quick tunnel after 5 attempts (rate limit): the tunnel test is skipped"
+            docker logs cf-quick 2>&1 | tail -5
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Wait for the public hostname
+        if: steps.tunnel.outputs.available == 'true'
         # DNS for a fresh trycloudflare hostname can take several seconds to appear
         run: curl -fsS --retry 30 --retry-delay 3 --retry-all-errors -o /dev/null "$TUNNEL_URL/"
 
       - name: Load test through the quick tunnel
+        if: steps.tunnel.outputs.available == 'true'
         env:
           NO_CACHE: 1   # bypass nginx's cache so every replica gets requests
         run: |
@@ -429,6 +449,7 @@ jobs:
             --headless -u 50 -t 1m --html quick-tunnel-report.html
 
       - name: Check load was spread across all replicas
+        if: steps.tunnel.outputs.available == 'true'
         run: |
           for id in $(docker compose ps -q app); do
             n=$(docker logs "$id" 2>&1 | grep -c "GET /allmovies" || true)
@@ -437,7 +458,7 @@ jobs:
           done
 
       - name: Upload report
-        if: always()
+        if: always() && steps.tunnel.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: quick-tunnel-report
