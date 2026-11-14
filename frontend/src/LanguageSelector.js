@@ -1,6 +1,6 @@
 import React from "react";
 import { FormControl, InputLabel, Select, MenuItem, Box } from "@mui/material";
-import Flag from "react-world-flags";
+import Flag from "./Flag";
 import languages from "./languages.json";
 
 
