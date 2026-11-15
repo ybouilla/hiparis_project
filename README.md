@@ -34,7 +34,7 @@ npm run build
 
 ## How the website works
 
-The site is a React single-page app served by a small Flask API. The API reads `backend/movies.csv` once (`backend/load_csv.py` repairs the records that span several lines) and keeps it as a pandas DataFrame in memory, so there is no database in the request path. The project also possesses a ELT pipeline for loading the csv into a database, and use data from this database. This makes the solution more scalable (see below ELT and postgreSQL pipeline).
+The site is a React single-page app served by a small Flask API. The API reads `backend/movies.csv` once (`backend/load_csv.py` repairs the records that span several lines) and keeps it as a pandas DataFrame in memory, so by default there is no database in the request path. With `DATA_SOURCE=postgres` (or `auto`) the API reads the PostgreSQL warehouse instead, see "Using the database from the website". The project also possesses a ELT pipeline for loading the csv into a database, and use data from this database. This makes the solution more scalable (see below ELT and postgreSQL pipeline).
 
 ### The stack
 
@@ -60,10 +60,12 @@ flowchart LR
     app1 <-->|"answers"| mc
     app2 <-->|"answers"| mc
 
-    subgraph optional["optional data warehouse, not used by the site yet"]
+    subgraph optional["optional data warehouse (PostgreSQL)"]
         csv[("movies.csv")] -->|"python loader"| raw[("PostgreSQL<br/>raw.movies")]
         raw -->|"dbt"| star[("star schema")]
     end
+    app1 -.->|"DATA_SOURCE=postgres"| star
+    app2 -.-> star
 ```
 
 nginx is the only entry point. It finds the replicas through the network's DNS name `app` (so scaling up or down needs no reload) and answers repeated `/allmovies` and `/statistics` requests from its own cache. The replicas share the answers they compute through memcached. Cloudflare and the PostgreSQL pipeline are optional.
@@ -282,7 +284,7 @@ For further information reagrding CI/CD, please visit the page ![CI_CD](./CI_CD.
 
 ## Load data (PostgreSQL, star schema)
 
-`movies.csv` can be loaded into PostgreSQL. This is optional: the web app still reads the CSV directly.
+`movies.csv` can be loaded into PostgreSQL. This is optional: by default the web app still reads the CSV directly; "Using the database from the website" below makes it read this database.
 
 It is an ELT pipeline: Python extracts the CSV and loads it as-is into a `raw` table, then [dbt](https://www.getdbt.com/) transforms it into the star schema (SQL models, database constraints and tests).
 
@@ -306,6 +308,33 @@ scripts/localdb.sh stop                   # the data stays in ./.localdb until `
 `scripts/localdb.sh` needs no Docker, no root and no system service: it runs its own server, listening on `127.0.0.1` only, with the same default user, password and database as the compose setup (`url` prints the connection string, `status` tells whether it runs). If port 5432 is taken (Ubuntu starts a system PostgreSQL after `apt install postgresql`), use another one for both commands: `export POSTGRES_PORT=5433`. Any PostgreSQL you already run works as well: point the `POSTGRES_*` variables below to it and skip the script.
 
 The connection comes from `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` (defaults: `localhost`, `5432`, and `movies` for the last three). Arguments of `etl/run.sh` go to the loader: `--dry-run` only parses the CSV, `--recreate` drops and recreates `raw.movies`.
+
+### Using the database from the website
+
+The API (`backend/store.py`) can answer from the warehouse instead of the CSV. The choice is the environment variable `DATA_SOURCE`:
+
+| `DATA_SOURCE` | the API reads | if the database is down or not built |
+|---|---|---|
+| `csv` (default) | `movies.csv`, as before | not concerned: it never connects to the database |
+| `postgres` | the star schema | `503` with a JSON message (`{"message": "database unreachable: ..."}`); answers again as soon as the database is back |
+| `auto` | PostgreSQL, else the CSV | answers from the CSV, tries PostgreSQL again after 30 s |
+
+```shell
+# with docker compose: build the warehouse once, then start the website on it
+docker compose --profile db up -d db
+docker compose --profile db run --rm etl
+DATA_SOURCE=postgres docker compose up -d --build app nginx
+
+# without docker
+scripts/localdb.sh start && sh etl/run.sh
+DATA_SOURCE=postgres gunicorn --bind 0.0.0.0:5000 backend.wsgi:app
+```
+The connection comes from `DATABASE_URL`, or from `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` (the same variables as the pipeline; in `docker-compose.yml` the host is `db`). The `X-Data-Source` header of every API answer says which source produced it: `curl -si "localhost:5000/allmovies?start=0&end=5" | grep -i x-data-source`.
+
+- **Same API, same front end.** The two sources return the same JSON; a test compares them query by query (totals, genres, every field of every movie, sort order, quartiles).
+- **The caches follow the data.** The source and the version of the data are part of every cache key, so an answer from the CSV is never served for the database. The version of the database is the date of the last load of `raw.movies`, looked up at most every 30 s: after running the pipeline again, new answers appear within that time (and within nginx's 60 s).
+- **Small differences of the SQL source**, on purpose: the title is searched as plain text (the CSV source reads it as a regular expression, so `(` made it fail), a genre filter must equal a genre name (the CSV source accepts any substring), the genres of a movie come in alphabetical order, and movies with the same sort value keep their file order.
+- Each request costs one or two SQL queries, and the caches (worker memory, memcached, nginx) sit in front of them as before.
 
 ### Database Model (`dbt/models/marts/`)
 

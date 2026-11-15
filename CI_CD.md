@@ -2,14 +2,15 @@
 
 CI CD mainly executes unit tests, as well as end to end tests using differents setups and environments, and for stress tests. 
 
-`.github/workflows/build_test.yml` runs on every push and pull request to `dev` and `master`. It has 14 jobs with no dependency between them, so they all start at the same time (some run on several operating systems).
+`.github/workflows/build_test.yml` runs on every push and pull request to `dev` and `master`. It has 15 jobs with no dependency between them, so they all start at the same time (some run on several operating systems).
 
 ```mermaid
 flowchart LR
-    trigger(["push or pull request<br/>to dev / master"]) --> gha["GitHub Actions<br/>14 independent jobs, in parallel"]
+    trigger(["push or pull request<br/>to dev / master"]) --> gha["GitHub Actions<br/>15 independent jobs, in parallel"]
 
     subgraph data["Data pipeline"]
         et["etl-test<br/>PostgreSQL service container:<br/>loader tests, pipeline twice, dbt tests"]
+        wd["website-database-test<br/>the website answering from<br/>PostgreSQL, then database stopped"]
         lt["local-db-test<br/>private PostgreSQL<br/>(scripts/localdb.sh)"]
         pdt["podman-db-test<br/>database profile on Podman,<br/>non-blocking"]
     end
@@ -55,9 +56,10 @@ flowchart LR
 | `cloudflare-quick-tunnel-test` | 4 replicas behind a temporary `trycloudflare.com` URL (no account needed), Locust through it, every replica must have received requests | same as above |
 | `cloudflare-test` | the same through your own tunnel and domain. Skipped unless the repository has the `CLOUDFLARE_TUNNEL_TOKEN` secret and the `CLOUDFLARE_URL` variable, and on pull requests from forks | a load-test request fails |
 | `podman-test` | the stack on rootless Podman: it starts, the API answers, nginx's cache and memcached work, the containers do not run as root | a step fails (the job does not block the others yet: `continue-on-error`) |
-| `etl-test` | PostgreSQL as a service container: loader tests, then the pipeline twice (load `raw.movies`, then `dbt build` with its tests), then checks on the warehouse | a test, a dbt model or a dbt test fails |
+| `etl-test` | PostgreSQL as a service container: loader tests, then the pipeline twice (load `raw.movies`, then `dbt build` with its tests), then the website's data source tests (`backend/tests/test_store.py`: the PostgreSQL store must give the same answers as the CSV store, query by query), then checks on the warehouse | a test, a dbt model or a dbt test fails |
 | `lighthouse-test` | the whole stack with `docker compose`, then Lighthouse CI 3 times on the home page (`frontend/lighthouserc.json`). The report (scores, timings, downloads, failing accessibility checks, biggest savings) goes to the job summary, to the `lighthouse-reports` artifact and, on pull requests, to a comment (not for forks) | the JavaScript downloaded exceeds 270 KB (scores and timings are only warnings) |
 | `local-cache-test` | memcached installed with `apt` and started by `scripts/localcache.sh` (no Docker), the app run locally with 2 gunicorn workers: the same URL 16 times must give one `miss` and answers from `memcached`, and `stats` must show cached items | a step fails, or no answer comes from memcached |
+| `website-database-test` | the website on top of the database, in containers: PostgreSQL and the pipeline build the warehouse, the app runs with `DATA_SOURCE=postgres` and must answer from it (`X-Data-Source: postgres`, a language filter and a sort really applied, statistics), then the database is stopped (the API must answer `503` with a message) and started again (it must answer again) | a check fails |
 | `local-db-test` | the same pipeline against the private PostgreSQL started by `scripts/localdb.sh` (no Docker) | the pipeline or the final row count fails |
 | `podman-db-test` | the database profile on rootless Podman | non-blocking, like `podman-test` |
 
