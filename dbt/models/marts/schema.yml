@@ -155,6 +155,13 @@ models:
           - type: foreign_key
             to: ref('dim_genre')
             to_columns: [genre_key]
+      - name: genre_position
+        description: Place of the genre in the movie's own list (1, 2, 3...), to give the genres back in their original order.
+        data_type: smallint
+        constraints:
+          - type: not_null
+          - type: check
+            expression: "genre_position >= 1"
 
   - name: vw_movies
     description: Flat view, one row per movie, same columns as the original CSV.

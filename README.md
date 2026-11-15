@@ -333,7 +333,7 @@ The connection comes from `DATABASE_URL`, or from `POSTGRES_HOST`, `POSTGRES_POR
 
 - **Same API, same front end.** The two sources return the same JSON; a test compares them query by query (totals, genres, every field of every movie, sort order, quartiles).
 - **The caches follow the data.** The source and the version of the data are part of every cache key, so an answer from the CSV is never served for the database. The version of the database is the date of the last load of `raw.movies`, looked up at most every 30 s: after running the pipeline again, new answers appear within that time (and within nginx's 60 s).
-- **Small differences of the SQL source**, on purpose: the title is searched as plain text (the CSV source reads it as a regular expression, so `(` made it fail), a genre filter must equal a genre name (the CSV source accepts any substring), the genres of a movie come in alphabetical order, and movies with the same sort value keep their file order.
+- **Same rules in both sources**, checked query by query by the tests: the title is a plain, case-insensitive text (a `(` or `+` in it is not an error), a genre filter matches whole genre names, case-insensitively and any of them, the genres of a movie come in the order of the CSV, and movies with the same sort value keep their file order (so two pages of a sorted list never overlap).
 - Each request costs one or two SQL queries, and the caches (worker memory, memcached, nginx) sit in front of them as before.
 
 ### Database Model (`dbt/models/marts/`)
@@ -353,7 +353,7 @@ One row per movie in the fact table. Genre is multi-valued, so it goes through a
 | `fact_movie` | measures `popularity`, `vote_count`, `vote_average`; keys to the dimensions |
 | `dim_date` | release date: year, quarter, month, day, weekday, decade |
 | `dim_language` | language code and English name |
-| `dim_genre`, `bridge_movie_genre` | the 19 genres and the movie-genre links (a movie has 1 to n genres) |
+| `dim_genre`, `bridge_movie_genre` | the 19 genres and the movie-genre links (a movie has 1 to n genres); `genre_position` keeps the order of the movie's own list |
 | `dim_movie` | title, overview, poster URL (kept out of the fact table so that scans over the measures stay narrow) |
 | `vw_movies` | view with the same columns as the CSV, one row per movie |
 

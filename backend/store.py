@@ -13,10 +13,10 @@ Which store: the environment variable DATA_SOURCE.
               when it is back).
 The database is reached through DATABASE_URL, or POSTGRES_HOST / _PORT / _USER / _PASSWORD / _DB.
 
-Small differences of the SQL store, on purpose: the title is a plain case-insensitive substring
-(the CSV store treats it as a regular expression), a genre must equal a genre name (the CSV store
-accepts any substring of the genre text), the genres of a movie come in alphabetical order, and
-movies with the same sort value keep their file order.
+Both stores follow the same rules, checked query by query by backend/tests/test_store.py:
+the title is a plain, case-insensitive substring; a genre filter matches whole genre names (any
+of them, case-insensitive); the genres of a movie keep the order of the CSV; movies with the same
+sort value keep their file order.
 """
 import functools
 import logging
@@ -92,10 +92,12 @@ class CsvStore:
         dates = list(dates)
 
         if title:
-            mask = df["Title"].str.contains(title, case=False, na=False)
+            # plain text, not a regular expression: "(" or "+" in a title must not break the search
+            mask = df["Title"].str.contains(title, case=False, na=False, regex=False)
             df = df[mask]
-        if len(genre) > 0 and genre != "[]":
-            mask = df["Genre"].str.contains("|".join(genre), case=False, na=False)
+        if len(genre) > 0:
+            wanted = {g.lower() for g in genre}
+            mask = df["Genre_List"].apply(lambda genres: any(g.lower() in wanted for g in genres))
             df = df[mask]
         if language:
             df = df[df["Original_Language"] == language]
@@ -115,7 +117,8 @@ class CsvStore:
             if order_by not in SORTED_VALUES_AVAIL.keys():
                 print("unknown key ", order_by)
             else:
-                df = df.sort_values(SORTED_VALUES_AVAIL[order_by], ascending=order_desc == "asc")
+                # stable: movies with the same value stay in file order, so two pages never overlap
+                df = df.sort_values(SORTED_VALUES_AVAIL[order_by], ascending=order_desc == "asc", kind="stable")
         df = df.iloc[n_start:n_end]
         movies = df.to_dict(orient="records")
         # compute max (for chart only)
@@ -224,7 +227,8 @@ _SORT_COLUMNS = {"popularity": "f.popularity", "release_date": "d.full_date",
 
 _GENRES_OF_MOVIE = """
     SELECT g.genre_name FROM bridge_movie_genre b JOIN dim_genre g ON g.genre_key = b.genre_key
-    WHERE b.movie_key = f.movie_key AND g.genre_key <> 0"""
+    WHERE b.movie_key = f.movie_key AND g.genre_key <> 0
+    ORDER BY b.genre_position"""
 
 _CHECK_EVERY = 30.0   # seconds between two looks at the database for its version / size
 
@@ -329,7 +333,7 @@ class PostgresStore:
 
         rows = self._run(
             "SELECT d.full_date, m.title, m.overview, f.popularity, f.vote_count, f.vote_average, "
-            f"l.language_code, m.poster_url, ARRAY({_GENRES_OF_MOVIE} ORDER BY g.genre_name COLLATE \"C\")"
+            f"l.language_code, m.poster_url, ARRAY({_GENRES_OF_MOVIE})"
             + _FROM + where + f" ORDER BY {order} OFFSET %s LIMIT %s",
             params + [max(n_start, 0), max(n_end - n_start, 0)])
 

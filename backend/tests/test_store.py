@@ -193,7 +193,7 @@ def _same_movie(a, b):
         and a["Poster_Url"] == b["Poster_Url"] and a["Original_Language"] == b["Original_Language"] \
         and math.isclose(a["Popularity"], b["Popularity"], abs_tol=5e-4) and int(a["Vote_Count"]) == int(b["Vote_Count"]) \
         and math.isclose(a["Vote_Average"], b["Vote_Average"], abs_tol=0.051) \
-        and sorted(a["Genre_List"]) == sorted(b["Genre_List"])
+        and a["Genre_List"] == b["Genre_List"] and a["Genre"] == b["Genre"]            # same genres, same order
 
 
 class TestPostgresMatchesCsv:
@@ -203,14 +203,20 @@ class TestPostgresMatchesCsv:
         a, b = csv.query_movies(*query), pg.query_movies(*query)
         assert (a["total_movies"], a["all_genres"], a["min_date"]) == (b["total_movies"], b["all_genres"], b["min_date"])
         assert len(a["movies"]) == len(b["movies"])
-        sort_key = SORT_KEYS.get(query[7])
-        if sort_key:     # same values in the same order (movies with equal values may come in another order)
-            value = lambda m: str(m[sort_key])[:10] if sort_key == "Release_Date" else float(m[sort_key])
-            assert [value(m) for m in a["movies"]] == [value(m) for m in b["movies"]]
-        else:            # same movies, in file order
-            assert all(_same_movie(x, y) for x, y in zip(a["movies"], b["movies"]))
-            for key in ("Popularity", "Vote_Count"):
-                assert a["max_val"][key] == b["max_val"][key]
+        # the very same movies in the very same order, ties included (both stores keep file order)
+        assert all(_same_movie(x, y) for x, y in zip(a["movies"], b["movies"]))
+        assert a["max_val"]["Popularity"] == b["max_val"]["Popularity"]
+        assert a["max_val"]["Vote_Count"] == b["max_val"]["Vote_Count"]
+        assert math.isclose(a["max_val"]["Vote_Average"], b["max_val"]["Vote_Average"], abs_tol=0.051)
+
+    def test_every_movie_has_its_genres_in_the_same_order(self):
+        """The whole dataset in one answer: the genres of all the 9 826 movies, in the CSV's order."""
+        pg, csv = _warehouse(), CsvStore()
+        everything = args(0, csv.total() + 1)
+        a, b = csv.query_movies(*everything)["movies"], pg.query_movies(*everything)["movies"]
+        assert len(a) == len(b)
+        wrong = [(x["Title"], x["Genre_List"], y["Genre_List"]) for x, y in zip(a, b) if x["Genre_List"] != y["Genre_List"]]
+        assert wrong[:3] == []
 
     @pytest.mark.parametrize("dates", [(), ("1990", "2000"), ("2010", "2010"), ("1950", "1960")])
     def test_statistics(self, dates):
@@ -237,3 +243,84 @@ class TestPostgresMatchesCsv:
         assert response.status_code == 201 and response.headers["X-Data-Source"] == "postgres"
         assert len(body["movies"]) == 20 and all("Drama" in m["Genre_List"] for m in body["movies"])
         assert body["movies"][0]["Release_Date"].endswith("GMT")               # same date format as with the CSV
+
+
+class TestSameRulesInBothStores:
+    """What used to differ between the two sources, now the same rules for both."""
+
+    def stores(self):
+        return CsvStore(), _warehouse()
+
+    @pytest.mark.parametrize("title", ["(((", "a+", "[", "\\", "*star", "?", "spider)", "50%", "a_b"])
+    def test_titles_are_plain_text_not_regular_expressions(self, title):
+        for store in self.stores():
+            store.query_movies(*args(title=title))                        # no error
+        csv, pg = self.stores()
+        assert csv.query_movies(*args(title=title))["total_movies"] == pg.query_movies(*args(title=title))["total_movies"]
+
+    def test_a_title_with_regex_characters_is_found_literally(self):
+        csv, pg = self.stores()
+        for store in (csv, pg):
+            assert store.query_movies(*args(title="spider-man"))["total_movies"] > 0       # "-" and "." are not special
+            assert store.query_movies(*args(title="spider.man"))["total_movies"] == 0      # "." is not "any character"
+
+    def test_title_search_ignores_case(self):
+        for store in self.stores():
+            assert store.query_movies(*args(title="SPIDER"))["total_movies"] == store.query_movies(*args(title="spider"))["total_movies"] > 0
+
+    @pytest.mark.parametrize("genre", [["Fiction"], ["Sci"], ["Dram"], ["Science"]])
+    def test_a_genre_must_be_a_whole_name(self, genre):
+        for store in self.stores():
+            assert store.query_movies(*args(genre=genre))["total_movies"] == 0        # a piece of a name is not a genre
+
+    @pytest.mark.parametrize("genre", [["science fiction"], ["DRAMA"], ["drama", "Comedy"], ["Action", "Nope"]])
+    def test_genres_ignore_case_and_any_of_them_matches(self, genre):
+        csv, pg = self.stores()
+        a, b = csv.query_movies(*args(genre=genre)), pg.query_movies(*args(genre=genre))
+        assert a["total_movies"] == b["total_movies"] > 0
+
+    def test_movies_with_the_same_value_keep_file_order_on_every_page(self):
+        """Vote counts have many ties: two pages of the same sorted list must not overlap or skip."""
+        for store in self.stores():
+            first = store.query_movies(*args(0, 50, order_by="vote_count", order_desc="desc"))["movies"]
+            second = store.query_movies(*args(50, 100, order_by="vote_count", order_desc="desc"))["movies"]
+            whole = store.query_movies(*args(0, 100, order_by="vote_count", order_desc="desc"))["movies"]
+            assert [m["Title"] for m in first + second] == [m["Title"] for m in whole]
+            assert len({(m["Title"], str(m["Release_Date"])) for m in first + second}) == 100
+
+    @pytest.mark.parametrize("direction", ["asc", "desc"])
+    def test_ties_come_in_file_order(self, direction):
+        csv = CsvStore()
+        movies = csv.query_movies(*args(0, 9827, order_by="vote_count", order_desc=direction))["movies"]
+        position = {(m["Title"], str(m["Release_Date"])): i for i, m in enumerate(csv.query_movies(*args(0, 9827))["movies"])}
+        for before, after in zip(movies, movies[1:]):
+            if before["Vote_Count"] == after["Vote_Count"]:
+                assert position[(before["Title"], str(before["Release_Date"]))] < position[(after["Title"], str(after["Release_Date"]))]
+
+
+class TestCsvRules:
+    """The same rules, for the CSV store alone: these run everywhere, without any database."""
+
+    @pytest.mark.parametrize("title", ["(((", "a+", "[", "\\", "*star", "?", "spider)"])
+    def test_regex_characters_in_a_title_are_not_an_error(self, title):
+        assert CsvStore().query_movies(*args(title=title))["total_movies"] >= 0
+
+    def test_a_title_is_plain_text(self):
+        csv = CsvStore()
+        assert csv.query_movies(*args(title="spider-man"))["total_movies"] > 0
+        assert csv.query_movies(*args(title="spider.man"))["total_movies"] == 0        # "." is not "any character"
+        assert csv.query_movies(*args(title="SPIDER"))["total_movies"] == csv.query_movies(*args(title="spider"))["total_movies"] > 0
+
+    @pytest.mark.parametrize("genre", [["Fiction"], ["Sci"], ["Dram"]])
+    def test_a_piece_of_a_genre_name_is_not_a_genre(self, genre):
+        assert CsvStore().query_movies(*args(genre=genre))["total_movies"] == 0
+
+    def test_genres_ignore_case_and_any_of_them_matches(self):
+        csv = CsvStore()
+        drama = csv.query_movies(*args(genre=["Drama"]))["total_movies"]
+        assert csv.query_movies(*args(genre=["dRaMa"]))["total_movies"] == drama > 0
+        assert csv.query_movies(*args(genre=["Drama", "Comedy"]))["total_movies"] > drama
+
+    def test_genres_keep_the_order_of_the_file(self):
+        first = CsvStore().query_movies(*args(0, 1))["movies"][0]
+        assert first["Genre_List"] == [g.strip() for g in first["Genre"].split(",")]
