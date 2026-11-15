@@ -12,7 +12,7 @@ select
     f.vote_average,
     l.language_code                 as original_language,
     (
-        select string_agg(g.genre_name, ', ' order by g.genre_name)
+        select string_agg(g.genre_name, ', ' order by b.genre_position)
         from {{ ref('bridge_movie_genre') }} as b
         join {{ ref('dim_genre') }} as g on g.genre_key = b.genre_key
         where b.movie_key = m.movie_key

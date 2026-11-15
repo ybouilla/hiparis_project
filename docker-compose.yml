@@ -29,6 +29,14 @@ services:
       # Answers are also cached in memcached, shared by all workers and replicas (backend/cache.py).
       # Set it to "off" to use only the cache in each worker's memory. The app works without memcached.
       MEMCACHED_SERVERS: ${MEMCACHED_SERVERS:-memcached:11211}
+      # Where the movies come from: csv (default: movies.csv), postgres (the warehouse built by
+      # `docker compose --profile db run --rm etl`; needs the `db` profile running) or auto
+      # (PostgreSQL when it answers, the CSV otherwise). See backend/store.py.
+      DATA_SOURCE: ${DATA_SOURCE:-csv}
+      POSTGRES_HOST: db
+      POSTGRES_USER: ${POSTGRES_USER:-movies}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-movies}
+      POSTGRES_DB: ${POSTGRES_DB:-movies}
     depends_on:
       - memcached
     # No `ports:` and no `container_name:` -- both would prevent scaling.

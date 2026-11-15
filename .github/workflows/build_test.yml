@@ -610,7 +610,7 @@ jobs:
       - name: Install dependencies (python loader + dbt)
         run: |
           uv venv
-          uv pip install -r etl/requirements.txt pytest==9.1.1
+          uv pip install -r requirements.txt -r etl/requirements.txt pytest==9.1.1
 
       - name: Loader tests (repeatable, atomic load of raw.movies)
         env:
@@ -627,6 +627,11 @@ jobs:
         run: |
           uv run sh etl/run.sh
           uv run sh etl/run.sh   # the second run replaces tables that foreign keys point to
+
+      - name: The website's data source (backend/store.py) gives the same answers as the CSV
+        env:
+          TEST_DATABASE_URL: postgresql://movies:movies@localhost:5432/movies
+        run: uv run -m pytest backend/tests/test_store.py -v
 
       - name: Query the warehouse
         env:
@@ -806,3 +811,62 @@ jobs:
       - name: Clean up
         if: always()
         run: docker compose down -v
+
+  website-database-test:
+    # The website on top of the database, in containers: PostgreSQL and the pipeline build the
+    # warehouse, the app answers from it (DATA_SOURCE=postgres), then the database is stopped to
+    # see what the website does, and started again.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the warehouse (PostgreSQL + pipeline)
+        run: |
+          docker compose --profile db up -d db
+          docker compose --profile db run --rm etl
+
+      - name: Start the website on the database
+        env:
+          DATA_SOURCE: postgres
+          APP_REPLICAS: 2
+        run: docker compose up -d --build --wait app nginx
+
+      - name: The answers come from PostgreSQL and are right
+        run: |
+          set -e
+          base=http://localhost:5000
+          source_of() { curl -s -D - -o /dev/null -H 'X-No-Cache: 1' "$1" | tr -d '\r' | grep -i '^x-data-source' | awk '{print $2}'; }
+          test "$(source_of "$base/allmovies?start=0&end=20")" = "postgres"
+          curl -fsS -H 'X-No-Cache: 1' "$base/allmovies?start=0&end=20&lang=ja&order_by=vote_count&order_desc=desc" | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)
+          movies = data["movies"]
+          assert movies and all(m["Original_Language"] == "ja" for m in movies), "the language filter is not applied"
+          counts = [m["Vote_Count"] for m in movies]
+          assert counts == sorted(counts, reverse=True), "the sort is not applied"
+          assert data["total_movies"] > 100 and len(data["all_genres"]) >= 15
+          '
+          curl -fsS -H 'X-No-Cache: 1' "$base/statistics?dates=1990&dates=2000" | grep -q '"stats_genre"'
+
+      - name: With the database stopped, the website says so
+        run: |
+          docker compose --profile db stop db
+          # a URL nobody asked for yet, so that no cache can answer it
+          code=$(curl -s -o body.json -w '%{http_code}' -H 'X-No-Cache: 1' "http://localhost:5000/allmovies?start=0&end=7&genre=Western&order_by=vote_average")
+          echo "HTTP $code: $(cat body.json)"
+          test "$code" = "503"
+          grep -qi 'database' body.json
+
+      - name: Started again, it answers again
+        run: |
+          docker compose --profile db start db
+          curl -fsS --retry 30 --retry-delay 2 --retry-all-errors -H 'X-No-Cache: 1' -o /dev/null \
+            "http://localhost:5000/allmovies?start=0&end=7&genre=Western&order_by=vote_average"
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose --profile db logs --tail=60
+
+      - name: Clean up
+        if: always()
+        run: docker compose --profile db down -v
