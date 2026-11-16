@@ -136,6 +136,30 @@ Then open the application in your web browser: http://localhost:5000
 If it does not work, try to open it from an incognito browser window
 
 ## Caching setting
+#### Extra isolation with gVisor (optional)
+
+[gVisor](https://gvisor.dev) is a container runtime (`runsc`) that puts a small user-space kernel between a container and the host's Linux kernel. If nginx, Flask or one of their libraries were exploited, the attacker would meet gVisor and not the host kernel. It comes on top of the other measures (non-root user, read-only filesystem, no capabilities, rootless Podman). Since the app is a read-only movie API without uploads or user code, this is defence in depth, not a necessity: it is **off by default**.
+
+```shell
+# once: install gVisor (Debian / Ubuntu; other systems: https://gvisor.dev/docs/user_guide/install/)
+curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list
+sudo apt-get update && sudo apt-get install -y runsc
+sudo runsc install                                       # registers the runtime "runsc" in Docker
+sudo runsc install --runtime runsc-hostnet -- --network=host   # and "runsc-hostnet", the one the override uses
+sudo systemctl restart docker
+
+# then add the override file to any compose command
+docker compose -f docker-compose.yml -f docker-compose.gvisor.yml up -d --build
+```
+- **What is sandboxed:** `app`, `nginx` and `memcached` (`docker-compose.gvisor.yml` only adds `runtime: runsc-hostnet` to them). The database and the one-shot pipeline are left out: nothing exposed there to protect, and heavy disk and shared-memory use that gVisor handles less well.
+- **Why "hostnet" and what it costs:** with plain `runsc`, gVisor brings its own network stack, which cannot reach Docker's built-in DNS: the containers cannot find each other by name and nginx answers 502 (this was measured in CI: `connection refused` from `127.0.0.11:53`, while the app was reachable by IP). The `runsc-hostnet` runtime (`--network=host`) keeps gVisor's system-call, file-system and process isolation but uses the host's network stack, so names resolve. The price is that the network stack itself is not sandboxed. Both runtimes are registered by the commands above; use plain `runsc` only if you do not need service names.
+- **How to check:** `docker exec <app container> uname -r` shows gVisor's own kernel version, not the host's; `docker inspect -f '{{.HostConfig.Runtime}}' <container>` says `runsc-hostnet`.
+- **Cost:** system calls and networking are slower, so expect lower throughput and higher latency. The CI job `gvisor-test` load-tests the plain and the sandboxed stack in the same way and prints both in its job summary, so you can see the figure for yourself.
+- **Podman:** `podman-compose -f docker-compose.yml -f docker-compose.gvisor.yml up -d` passes the runtime on (`--runtime runsc-hostnet`), after that name is declared in `containers.conf` (`[engine.runtimes]`: a script that runs `runsc --network=host`, see the gVisor documentation). Rootless Podman with gVisor has extra requirements (cgroups, networking) that I did not test.
+- **Docker Desktop and WSL:** gVisor needs a Linux host where you can install a runtime; it is not available by default there.
+- On Google Cloud, gVisor is built in (GKE Sandbox, Cloud Run), which would make it free to use if you deploy there.
+
 #### Local cache with memcached (optional)
 
 Run like this, each gunicorn worker only has the cache in its own memory. To share the answers between the workers, and keep them across restarts, run memcached too. `scripts/localcache.sh` starts a private one for you: no Docker, no root, listening on `127.0.0.1` only.
