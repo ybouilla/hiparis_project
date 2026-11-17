@@ -2,11 +2,11 @@
 
 CI CD mainly executes unit tests, as well as end to end tests using differents setups and environments, and for stress tests. 
 
-`.github/workflows/build_test.yml` runs on every push and pull request to `dev` and `master`. It has 15 jobs with no dependency between them, so they all start at the same time (some run on several operating systems).
+`.github/workflows/build_test.yml` runs on every push and pull request to `dev` and `master`. It has 16 jobs with no dependency between them, so they all start at the same time (some run on several operating systems).
 
 ```mermaid
 flowchart LR
-    trigger(["push or pull request<br/>to dev / master"]) --> gha["GitHub Actions<br/>15 independent jobs, in parallel"]
+    trigger(["push or pull request<br/>to dev / master"]) --> gha["GitHub Actions<br/>16 independent jobs, in parallel"]
 
     subgraph data["Data pipeline"]
         et["etl-test<br/>PostgreSQL service container:<br/>loader tests, pipeline twice, dbt tests"]
@@ -21,6 +21,7 @@ flowchart LR
         lh["lighthouse-test<br/>Lighthouse CI on the stack:<br/>scores, script-size limit,<br/>comment on the PR"]
         ct["cloudflare-test<br/>your own tunnel and domain,<br/>skipped without secrets"]
         pt["podman-test<br/>rootless Podman, non-blocking"]
+        gv["gvisor-test<br/>gVisor sandbox, non-blocking,<br/>cost of the isolation"]
     end
 
     subgraph perf["Load tests with Locust"]
@@ -56,6 +57,7 @@ flowchart LR
 | `cloudflare-quick-tunnel-test` | 4 replicas behind a temporary `trycloudflare.com` URL (no account needed), Locust through it, every replica must have received requests | same as above |
 | `cloudflare-test` | the same through your own tunnel and domain. Skipped unless the repository has the `CLOUDFLARE_TUNNEL_TOKEN` secret and the `CLOUDFLARE_URL` variable, and on pull requests from forks | a load-test request fails |
 | `podman-test` | the stack on rootless Podman: it starts, the API answers, nginx's cache and memcached work, the containers do not run as root | a step fails (the job does not block the others yet: `continue-on-error`) |
+| `gvisor-test` | installs gVisor, checks that a throw-away container boots its own kernel, then load-tests the plain stack and the stack started with `docker-compose.gvisor.yml` (`app`, `nginx`, `memcached` in the sandbox, runtime `runsc-hostnet`), checks that they really run in it (runtime, and a kernel version that is not the host's) and still work (API, nginx and in-process caches). The job summary compares requests per second and latency of the two | a step fails or a Locust request fails (non-blocking while the job is new: `continue-on-error`) |
 | `etl-test` | PostgreSQL as a service container: loader tests, then the pipeline twice (load `raw.movies`, then `dbt build` with its tests), then the website's data source tests (`backend/tests/test_store.py`: the PostgreSQL store must give the same answers as the CSV store, query by query), then checks on the warehouse | a test, a dbt model or a dbt test fails |
 | `lighthouse-test` | the whole stack with `docker compose`, then Lighthouse CI 3 times on the home page (`frontend/lighthouserc.json`). The report (scores, timings, downloads, failing accessibility checks, biggest savings) goes to the job summary, to the `lighthouse-reports` artifact and, on pull requests, to a comment (not for forks) | the JavaScript downloaded exceeds 270 KB (scores and timings are only warnings) |
 | `local-cache-test` | memcached installed with `apt` and started by `scripts/localcache.sh` (no Docker), the app run locally with 2 gunicorn workers: the same URL 16 times must give one `miss` and answers from `memcached`, and `stats` must show cached items | a step fails, or no answer comes from memcached |

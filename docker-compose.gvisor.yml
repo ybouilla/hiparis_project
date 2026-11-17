@@ -1,0 +1,26 @@
+# Optional extra isolation: run the web-facing containers in gVisor.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gvisor.yml up -d --build
+#   podman-compose -f docker-compose.yml -f docker-compose.gvisor.yml up -d --build
+#
+# gVisor puts a small user-space kernel between the container and the host's Linux kernel: a
+# vulnerability exploited in nginx, Flask or a library then meets gVisor, not the host kernel.
+# It costs some speed (system calls are slower) and needs gVisor installed and registered as a
+# runtime of Docker / Podman: see the README, "Extra isolation with gVisor".
+#
+# The runtime is "runsc-hostnet" (runsc with --network=host), not plain "runsc". With plain runsc
+# gVisor brings its own network stack, which cannot reach Docker's built-in DNS (127.0.0.11): the
+# containers could not find each other by name ("app", "memcached", "db"), and nginx answered 502.
+# In "hostnet" mode the sandbox keeps gVisor's system-call, file-system and process isolation but
+# uses the host's network stack, so names resolve. The price: the network stack itself is not part
+# of the sandbox.
+#
+# Only the services that face the network are sandboxed. The database is left out on purpose
+# (heavy disk and shared-memory use, and it is not exposed), and so is the one-shot pipeline.
+services:
+  app:
+    runtime: runsc-hostnet
+  nginx:
+    runtime: runsc-hostnet
+  memcached:
+    runtime: runsc-hostnet

@@ -870,3 +870,127 @@ jobs:
       - name: Clean up
         if: always()
         run: docker compose --profile db down -v
+
+  gvisor-test:
+    # The optional gVisor sandbox (docker-compose.gvisor.yml): install gVisor, check that the web-facing
+    # containers really run in it, smoke-test them, and load-test the plain and the sandboxed stack the
+    # same way so that the cost of the isolation shows in the job summary.
+    # continue-on-error: this job has not run on a real runner yet. Remove it once green.
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.28"
+
+      - name: Install gVisor and register it as a Docker runtime
+        # the official instructions: https://gvisor.dev/docs/user_guide/install/
+        # two runtimes: runsc (gVisor's own network stack) and runsc-hostnet (the host's network stack,
+        # needed here: Docker's built-in DNS, which finds the services by name, does not work with the first)
+        run: |
+          curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | sudo tee /etc/apt/sources.list.d/gvisor.list
+          sudo apt-get update
+          sudo apt-get install -y runsc
+          sudo runsc install
+          sudo runsc install --runtime runsc-hostnet -- --network=host
+          sudo systemctl restart docker
+          runsc --version | head -1
+
+      - name: gVisor works (a throw-away container boots its own kernel)
+        run: |
+          docker run --rm --runtime=runsc docker.io/library/alpine:3 dmesg | tee dmesg.txt
+          grep -qi gvisor dmesg.txt
+
+      - name: Install the load-test tool
+        run: |
+          uv venv --python 3.12
+          uv pip install locust
+
+      - name: Load test the plain stack (the reference)
+        env:
+          NO_CACHE: 1
+        run: |
+          docker compose up -d --build --wait
+          uv run locust -f backend/performance/locustfile.py --host=http://localhost:5000 \
+            --headless -u 50 -t 40s --csv=plain
+          docker compose down -v
+
+      - name: Start the sandboxed stack
+        run: docker compose -f docker-compose.yml -f docker-compose.gvisor.yml up -d --build --wait
+
+      - name: The containers really run in gVisor, and work
+        run: |
+          set -e
+          for service in app nginx memcached; do
+            id=$(docker compose ps -q "$service" | head -1)
+            runtime=$(docker inspect -f '{{.HostConfig.Runtime}}' "$id")
+            echo "$service: runtime=$runtime"
+            test "$runtime" = "runsc-hostnet"
+          done
+          # gVisor answers for its own kernel: not the host's version
+          host_kernel=$(uname -r)
+          sandbox_kernel=$(docker exec "$(docker compose ps -q app | head -1)" uname -r)
+          echo "host kernel: $host_kernel, kernel seen by the app: $sandbox_kernel"
+          test "$sandbox_kernel" != "$host_kernel"
+          # and the site works: API, nginx cache, in-process cache
+          base=http://localhost:5000
+          curl -fsS "$base/allmovies?start=0&end=5" | grep -q '"movies"'
+          url="$base/statistics?dates=1990&dates=2000"
+          status() { curl -s -D - -o /dev/null "$@" | tr -d '\r' | grep -i '^x-cache-status' | awk '{print $2}'; }
+          test "$(status "$url")" = "MISS"; test "$(status "$url")" = "HIT"
+
+      - name: Load test the sandboxed stack
+        env:
+          NO_CACHE: 1
+        run: |
+          uv run locust -f backend/performance/locustfile.py --host=http://localhost:5000 \
+            --headless -u 50 -t 40s --csv=gvisor
+
+      - name: What the isolation costs
+        if: always()
+        run: |
+          python3 - <<'PY' | tee cost.md
+          import csv, os
+          def row(prefix):
+              path = f"{prefix}_stats.csv"
+              if not os.path.exists(path):
+                  return None
+              return next(r for r in csv.DictReader(open(path)) if r["Name"] == "Aggregated")
+          plain, sandbox = row("plain"), row("gvisor")
+          print("### gVisor: what the isolation costs (50 users, 40 s, nginx cache bypassed)\n")
+          print("| | requests/s | median (ms) | 95th percentile (ms) | failures |\n|---|---|---|---|---|")
+          for name, r in (("plain (runc)", plain), ("gVisor (runsc)", sandbox)):
+              if r:
+                  print(f"| {name} | {float(r['Requests/s']):.1f} | {r['50%']} | {r['95%']} | {r['Failure Count']} |")
+          if plain and sandbox:
+              print(f"\nThroughput under gVisor: {100 * float(sandbox['Requests/s']) / float(plain['Requests/s']):.0f} % of the plain stack.")
+          PY
+          cat cost.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Why does nginx not reach the app? (diagnostics on failure)
+        if: failure()
+        run: |
+          f="-f docker-compose.yml -f docker-compose.gvisor.yml"
+          nginx=$(docker compose $f ps -q nginx | head -1)
+          echo "=== nginx error log"; docker logs --tail=25 "$nginx" 2>&1 | grep -i -E "error|warn|resolv|upstream" || true
+          echo "=== resolver the container uses"; docker exec "$nginx" cat /etc/resolv.conf || true
+          echo "=== can the nginx container resolve and reach the app?"
+          docker exec "$nginx" nslookup app 2>&1 | tail -4 || true
+          docker exec "$nginx" wget -q -O /dev/null -T 3 http://app:5000/allmovies?start=0\&end=1 && echo "reached app by name" || echo "NOT reachable by name"
+          app_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(docker compose $f ps -q app | head -1)")
+          docker exec "$nginx" wget -q -O /dev/null -T 3 "http://$app_ip:5000/allmovies?start=0&end=1" && echo "reached app by IP $app_ip" || echo "NOT reachable by IP either"
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.gvisor.yml logs --tail=60
+
+      - name: Clean up
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.gvisor.yml down -v
