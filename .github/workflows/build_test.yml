@@ -994,3 +994,97 @@ jobs:
       - name: Clean up
         if: always()
         run: docker compose -f docker-compose.yml -f docker-compose.gvisor.yml down -v
+
+  energy-test:
+    # Estimates the energy the stack uses: idle, then under the same load with the nginx cache bypassed
+    # and with the caches on. Eco CI (https://github.com/green-coding-solutions/eco-ci-energy-estimation)
+    # models the energy of the runner from its CPU use; scripts/energy_report.py relates it to the
+    # requests served. Nothing leaves GitHub (send-data: false). The numbers are an estimate, good to
+    # compare runs and to catch a regression, not an absolute figure.
+    # continue-on-error: this job has not passed on a real runner yet. Remove it once green.
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.28"
+
+      - name: Install the load-test tool
+        run: |
+          uv venv --python 3.12
+          uv pip install locust
+
+      - name: Start the stack
+        run: docker compose up -d --build --wait
+
+      - name: Start the energy measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v5
+        with:
+          task: start-measurement
+          send-data: false
+          # also write each measurement to /tmp/eco-ci/lap-data.json, which scripts/energy_report.py reads
+          json-output: true
+
+      - name: Idle stack for 30 s
+        run: sleep 30
+
+      - name: Measure the idle stack
+        uses: green-coding-solutions/eco-ci-energy-estimation@v5
+        with:
+          task: get-measurement
+          label: idle 30 s
+
+      - name: Load, nginx cache bypassed
+        env:
+          NO_CACHE: 1
+        run: |
+          uv run locust -f backend/performance/locustfile.py --host=http://localhost:5000 \
+            --headless -u 50 -t 40s --csv=nocache
+
+      - name: Measure the load without nginx cache
+        uses: green-coding-solutions/eco-ci-energy-estimation@v5
+        with:
+          task: get-measurement
+          label: load, nginx cache bypassed
+
+      - name: Load, caches on
+        run: |
+          uv run locust -f backend/performance/locustfile.py --host=http://localhost:5000 \
+            --headless -u 50 -t 40s --csv=cached
+
+      - name: Measure the load with caches
+        uses: green-coding-solutions/eco-ci-energy-estimation@v5
+        with:
+          task: get-measurement
+          label: load, caches on
+
+      - name: Show the energy table
+        uses: green-coding-solutions/eco-ci-energy-estimation@v5
+        with:
+          task: display-results
+
+      - name: Energy per request
+        run: |
+          count() { python3 -c "import csv,sys; print(next(r for r in csv.DictReader(open(sys.argv[1])) if r['Name']=='Aggregated')['Request Count'])" "$1"; }
+          python3 scripts/energy_report.py --data /tmp/eco-ci/lap-data.json --output energy-summary.md \
+            --idle "idle 30 s" \
+            --phase "load, nginx cache bypassed=$(count nocache_stats.csv)" \
+            --phase "load, caches on=$(count cached_stats.csv)"
+          cat energy-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail=60
+
+      - name: Clean up
+        if: always()
+        run: docker compose down -v

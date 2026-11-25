@@ -136,6 +136,17 @@ Then open the application in your web browser: http://localhost:5000
 If it does not work, try to open it from an incognito browser window
 
 ## Caching setting
+#### Energy consumption in CI
+
+The `energy-test` job estimates what the stack costs in energy, using [Eco CI](https://github.com/green-coding-solutions/eco-ci-energy-estimation) (it models the energy of the CI machine from its CPU use; nothing is sent outside GitHub). It measures three phases: 30 s idle, then 40 s of the same Locust load with the nginx cache bypassed, then with the caches on. The job summary shows Eco CI's table and `scripts/energy_report.py` adds the energy per request, with and without the idle share (it reads `/tmp/eco-ci/lap-data.json`, written because the job sets `json-output: true`). The expected result: the caches lower the energy per request.
+
+These are **estimates** from a model of a shared virtual machine, not a power meter, and Locust runs on that same machine, so its own energy is included: use them to compare runs and catch a regression, not as an absolute figure. The job stays non-blocking until it has passed on GitHub. The script can be tried locally on a file of the same format:
+
+```bash
+echo '{"steps":[{"label":"idle","energy_joules":"60","time":"30"},{"label":"load","energy_joules":"400","time":"40"}]}' > lap.json
+python scripts/energy_report.py --data lap.json --idle idle --phase "load=1000"
+```
+
 #### Extra isolation with gVisor (optional)
 
 [gVisor](https://gvisor.dev) is a container runtime (`runsc`) that puts a small user-space kernel between a container and the host's Linux kernel. If nginx, Flask or one of their libraries were exploited, the attacker would meet gVisor and not the host kernel. It comes on top of the other measures (non-root user, read-only filesystem, no capabilities, rootless Podman). Since the app is a read-only movie API without uploads or user code, this is defence in depth, not a necessity: it is **off by default**.
