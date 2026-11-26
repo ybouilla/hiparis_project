@@ -433,23 +433,52 @@ jobs:
           fi
 
       - name: Wait for the public hostname
+        id: hostname
         if: steps.tunnel.outputs.available == 'true'
-        # DNS for a fresh trycloudflare hostname can take several seconds to appear
-        run: curl -fsS --retry 30 --retry-delay 3 --retry-all-errors -o /dev/null "$TUNNEL_URL/"
+        # The DNS record of a fresh trycloudflare hostname takes a while to appear. Asking the runner's
+        # resolver too early makes it remember "no such host" far longer than our retries last. So: ask
+        # the domain's own name server until the record exists, then pin the address in /etc/hosts
+        # (used by curl and by Locust). If Cloudflare never publishes it, skip with a warning, as above.
+        run: |
+          host=${TUNNEL_URL#https://}
+          ns=$(dig +short NS trycloudflare.com | head -1)
+          ip=""
+          for i in $(seq 1 60); do
+            ip=$(dig +short A "$host" ${ns:+"@$ns"} | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -1 || true)
+            [ -n "$ip" ] && break
+            sleep 3
+          done
+          if [ -z "$ip" ]; then
+            echo "::warning::Cloudflare never published the DNS record of $host: the tunnel test is skipped"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$ip $host" | sudo tee -a /etc/hosts
+          # the record exists; the edge may still need a moment to route to the tunnel
+          curl -fsS --retry 30 --retry-delay 3 --retry-all-errors -o /dev/null "$TUNNEL_URL/"
+          echo "available=true" >> "$GITHUB_OUTPUT"
 
       - name: Load test through the quick tunnel
-        if: steps.tunnel.outputs.available == 'true'
+        if: steps.hostname.outputs.available == 'true'
         env:
           NO_CACHE: 1   # bypass nginx's cache so every replica gets requests
         run: |
           uv venv --python 3.12
           source .venv/bin/activate
           uv pip install locust
+          set -o pipefail
+          # locust itself does not fail on request errors: the next command decides, because a few
+          # Cloudflare 530 answers (tunnel unreachable for a moment) are not a failure of the app
           uv run locust -f backend/performance/locustfile.py --host="$TUNNEL_URL" \
-            --headless -u 50 -t 1m --html quick-tunnel-report.html
+            --headless -u 50 -t 1m --html quick-tunnel-report.html --csv=tunnel --exit-code-on-error 0
+          python scripts/check_tunnel_failures.py tunnel --max-percent 5 | tee tunnel-check.txt
+          if grep -q '::warning::' tunnel-check.txt; then
+            echo "=== cloudflared log: why was the tunnel unreachable?"
+            docker logs cf-quick 2>&1 | grep -E ' (ERR|WRN) ' | tail -20 || true
+          fi
 
       - name: Check load was spread across all replicas
-        if: steps.tunnel.outputs.available == 'true'
+        if: steps.hostname.outputs.available == 'true'
         run: |
           for id in $(docker compose ps -q app); do
             n=$(docker logs "$id" 2>&1 | grep -c "GET /allmovies" || true)
@@ -458,7 +487,7 @@ jobs:
           done
 
       - name: Upload report
-        if: always() && steps.tunnel.outputs.available == 'true'
+        if: always() && steps.hostname.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: quick-tunnel-report
@@ -903,10 +932,16 @@ jobs:
           sudo systemctl restart docker
           runsc --version | head -1
 
-      - name: gVisor works (a throw-away container boots its own kernel)
+      - name: gVisor works (a throw-away container sees gVisor's kernel, not the host's)
+        # not `dmesg`: reading the kernel log is "Operation not permitted" without extra privileges
         run: |
-          docker run --rm --runtime=runsc docker.io/library/alpine:3 dmesg | tee dmesg.txt
-          grep -qi gvisor dmesg.txt
+          host_kernel=$(uname -r)
+          for runtime in runsc runsc-hostnet; do
+            sandbox_kernel=$(docker run --rm --runtime="$runtime" docker.io/library/alpine:3 uname -r)
+            echo "$runtime: kernel seen in the container: $sandbox_kernel (host: $host_kernel)"
+            test -n "$sandbox_kernel"
+            test "$sandbox_kernel" != "$host_kernel"
+          done
 
       - name: Install the load-test tool
         run: |
@@ -974,23 +1009,132 @@ jobs:
           PY
           cat cost.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Why does nginx not reach the app? (diagnostics on failure)
+      - name: Why did it fail? (diagnostics)
         if: failure()
+        # must never fail itself, or it hides the real error: the containers may be stopped, or not exist
         run: |
+          set +e
           f="-f docker-compose.yml -f docker-compose.gvisor.yml"
+          echo "=== containers, stopped ones included"; docker compose $f ps -a
+          ids=$(docker compose $f ps -aq)
+          if [ -z "$ids" ]; then
+            echo "No container exists: the job failed before a stack was started, see the first red step above."
+            exit 0
+          fi
+          echo "=== state of each container (runtime runc: this is still the plain stack)"
+          for id in $ids; do
+            docker inspect -f '{{.Name}} runtime={{.HostConfig.Runtime}} status={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}{{if .State.Health}} health={{.State.Health.Status}}{{range .State.Health.Log}} | check exit {{.ExitCode}}: {{.Output}}{{end}}{{end}}' "$id"
+          done
+          echo "=== logs"; docker compose $f logs --tail=60
+          echo "=== Docker daemon, runtime errors"; sudo journalctl -u docker --since "-10 min" --no-pager | grep -i -E "runsc|error" | tail -20
           nginx=$(docker compose $f ps -q nginx | head -1)
-          echo "=== nginx error log"; docker logs --tail=25 "$nginx" 2>&1 | grep -i -E "error|warn|resolv|upstream" || true
-          echo "=== resolver the container uses"; docker exec "$nginx" cat /etc/resolv.conf || true
+          app=$(docker compose $f ps -q app | head -1)
+          if [ -z "$nginx" ] || [ -z "$app" ]; then
+            echo "nginx or app is not running: no network check (their state and logs are above)."
+            exit 0
+          fi
+          echo "=== resolver the nginx container uses"; docker exec "$nginx" cat /etc/resolv.conf
           echo "=== can the nginx container resolve and reach the app?"
-          docker exec "$nginx" nslookup app 2>&1 | tail -4 || true
-          docker exec "$nginx" wget -q -O /dev/null -T 3 http://app:5000/allmovies?start=0\&end=1 && echo "reached app by name" || echo "NOT reachable by name"
-          app_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(docker compose $f ps -q app | head -1)")
+          docker exec "$nginx" nslookup app 2>&1 | tail -4
+          docker exec "$nginx" wget -q -O /dev/null -T 3 "http://app:5000/allmovies?start=0&end=1" && echo "reached app by name" || echo "NOT reachable by name"
+          app_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$app")
           docker exec "$nginx" wget -q -O /dev/null -T 3 "http://$app_ip:5000/allmovies?start=0&end=1" && echo "reached app by IP $app_ip" || echo "NOT reachable by IP either"
-
-      - name: Logs on failure
-        if: failure()
-        run: docker compose -f docker-compose.yml -f docker-compose.gvisor.yml logs --tail=60
+          exit 0
 
       - name: Clean up
         if: always()
         run: docker compose -f docker-compose.yml -f docker-compose.gvisor.yml down -v
+
+  energy-test:
+    # Estimates the energy the stack uses: idle, then under the same load with the nginx cache bypassed
+    # and with the caches on. Eco CI (https://github.com/green-coding-solutions/eco-ci-energy-estimation)
+    # models the energy of the runner from its CPU use; scripts/energy_report.py relates it to the
+    # requests served. Nothing leaves GitHub (send-data: false). The numbers are an estimate, good to
+    # compare runs and to catch a regression, not an absolute figure.
+    # continue-on-error: this job has not passed on a real runner yet. Remove it once green.
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          version: "0.11.28"
+
+      - name: Install the load-test tool
+        run: |
+          uv venv --python 3.12
+          uv pip install locust
+
+      - name: Start the stack
+        run: docker compose up -d --build --wait
+
+      - name: Start the energy measurement
+        uses: green-coding-solutions/eco-ci-energy-estimation@v5
+        with:
+          task: start-measurement
+          send-data: false
+          # also write each measurement to /tmp/eco-ci/lap-data.json, which scripts/energy_report.py reads
+          json-output: true
+
+      - name: Idle stack for 30 s
+        run: sleep 30
+
+      - name: Measure the idle stack
+        uses: green-coding-solutions/eco-ci-energy-estimation@v5
+        with:
+          task: get-measurement
+          label: idle 30 s
+
+      - name: Load, nginx cache bypassed
+        env:
+          NO_CACHE: 1
+        run: |
+          uv run locust -f backend/performance/locustfile.py --host=http://localhost:5000 \
+            --headless -u 50 -t 40s --csv=nocache
+
+      - name: Measure the load without nginx cache
+        uses: green-coding-solutions/eco-ci-energy-estimation@v5
+        with:
+          task: get-measurement
+          label: load, nginx cache bypassed
+
+      - name: Load, caches on
+        run: |
+          uv run locust -f backend/performance/locustfile.py --host=http://localhost:5000 \
+            --headless -u 50 -t 40s --csv=cached
+
+      - name: Measure the load with caches
+        uses: green-coding-solutions/eco-ci-energy-estimation@v5
+        with:
+          task: get-measurement
+          label: load, caches on
+
+      - name: Show the energy table
+        uses: green-coding-solutions/eco-ci-energy-estimation@v5
+        with:
+          task: display-results
+
+      - name: Energy per request
+        run: |
+          count() { python3 -c "import csv,sys; print(next(r for r in csv.DictReader(open(sys.argv[1])) if r['Name']=='Aggregated')['Request Count'])" "$1"; }
+          python3 scripts/energy_report.py --data /tmp/eco-ci/lap-data.json --output energy-summary.md \
+            --idle "idle 30 s" \
+            --phase "load, nginx cache bypassed=$(count nocache_stats.csv)" \
+            --phase "load, caches on=$(count cached_stats.csv)"
+          cat energy-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail=60
+
+      - name: Clean up
+        if: always()
+        run: docker compose down -v
