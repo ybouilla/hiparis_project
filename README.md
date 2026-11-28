@@ -1,8 +1,6 @@
-# Project: Challenge – Visualisation d’une base de données de films
+# Project – Visualisation d’une base de données de films
 
-## Goal: Sujet
-Vous disposez d’un fichier contenant une base de données de films (movies.csv). Votre mission est de produire une plateforme permettant de visualiser au mieux l’intégralité de cette base de données.  
-
+## Goal: 
 
 Here is a short illustration of the rendered page.
 
@@ -16,7 +14,7 @@ The project requires the following dependencies:
 * [nodejs](https://nodejs.org/en/download/), version 22 or above.
 
 
-* Using [`uv`](https://docs.astral.sh/uv/) package manager
+* The following assumes your are using [`uv`](https://docs.astral.sh/uv/) package manager.
 
 (*Note: this project uses `uv` as the package manager. Other package managers may work but have not been tested.*)
 ```shell
