@@ -74,9 +74,9 @@ The movie data is a read-only CSV, so answers can be cached safely. Five layers,
 
 | Layer | What | Details |
 |---|---|---|
-| Memory of each gunicorn worker (`backend/cache.py`) | the genre list / min year (once), then the JSON of `/statistics` by year range and of `/allmovies` pages of at most 100 movies (256 answers, least recently used first) | the fastest, but private to the worker. Big answers (e.g. the whole dataset) are never cached, to bound memory. |
+| Memory of each gunicorn worker (`backend/cache.py`) | the genre list / min year (once), then the JSON of `/statistics` by year range and of `/allmovies` pages of at most 100 movies (256 answers, least recently used first) | the fastest, but private to the worker. Big answers (e.g. the statistics page's 500 movies) are never cached, to bound memory. |
 | memcached (`memcached` service) | the same JSON answers, for 1 hour | shared by **all workers of all replicas**: the first one to get a request computes the answer, the others reuse it, and it survives a restart of the app. Optional: see below. |
-| nginx (`nginx/nginx.conf`) | `/allmovies` and `/statistics` for 60 s, shared by all replicas | the `X-Cache-Status` response header says `HIT`, `MISS` or `BYPASS`. Send `X-No-Cache: 1` to skip it. |
+| nginx (`nginx/nginx.conf`) | `/allmovies` and `/statistics` for 60 s, shared by all replicas | the `X-Cache-Status` response header says `HIT`, `MISS` or `BYPASS`. With `ALLOW_CACHE_BYPASS=1` (off by default), `X-No-Cache: 1` skips it. |
 | Cloudflare | see below | `Cache-Control` set by nginx |
 | React Query, in the browser tab (`frontend/src/api.js`, `queryClient.js`) | every `/allmovies` and `/statistics` answer the page asked for | fresh for 5 minutes, kept 30. Asking again for a page already seen (same filters and sort), going back to a filter state you left, or coming back from the Statistics page costs **no request at all**. Identical requests in flight are shared. Lost when the tab is reloaded. |
 
@@ -90,7 +90,7 @@ A browser cannot talk to memcached (it is a TCP protocol, not HTTP), so memcache
 
 **The React cache.** Both pages (the movie list and the statistics) fetch through one function, `cachedGet(queryClient, url, params, signal)` in `frontend/src/api.js`. The cache key is the URL and the params compared by value (the order of the keys of `params` does not matter, the order of the items of an array does). An error or a cancelled request (the page aborts the pending request when a filter changes) is never cached. The lifetimes are set in one place, `frontend/src/queryClient.js` (`staleTime` 5 minutes, `gcTime` 30 minutes): lower `staleTime` if the data can change while a page is open. The cache lives in the memory of the tab, so a reload starts empty and the server-side layers answer instead.
 
-To load-test the replicas rather than the cache, run Locust with `NO_CACHE=1` (it sends `X-No-Cache: 1`):
+To load-test the replicas rather than the cache, start the stack with `ALLOW_CACHE_BYPASS=1`, a high `API_RATE_LIMIT` and `API_RATE_BURST` (all the load comes from one address, see "Limits on requests"), and run Locust with `NO_CACHE=1` (it sends `X-No-Cache: 1`):
 ```shell
 NO_CACHE=1 locust -f backend/performance/locustfile.py --host=http://localhost:5000 --headless -u 100 -t 1m
 ```
@@ -109,6 +109,27 @@ The containers are locked down (`docker-compose.yml`, `Dockerfile`):
 | Fully qualified image names (`docker.io/...`), so the registry is never guessed | all images |
 | The database port is published on `127.0.0.1` only; memcached (no authentication) publishes no port at all, only the other containers can reach it | `db`, `memcached` |
 
+
+#### Limits on requests
+
+| Protection | Default | Setting |
+|---|---|---|
+| Query parameters are checked (`backend/params.py`); a bad value gets `400` and a message | always on | |
+| One request returns at most 500 movies, also when `end` is not given | always on | `MAX_PAGE_SIZE` in `backend/params.py` |
+| API requests (`/allmovies`, `/statistics`) per client address, cached answers included; beyond it nginx answers `429`. Static files are not limited | 10 per second, 40 at once | `API_RATE_LIMIT`, `API_RATE_BURST` |
+| `X-No-Cache: 1` skipping the nginx cache | refused | `ALLOW_CACHE_BYPASS=1`, for load tests |
+
+The request limit and the cache rule are nginx's: gunicorn or Flask run on their own do not have them. The limit slows down one noisy client; it does not stop an attack from many addresses (that is the job of a service such as Cloudflare). Adding an unused parameter to the URL still avoids the nginx cache; such requests count against the limit, and the app's own cache ignores the parameter.
+
+Behind the Cloudflare tunnel every request reaches nginx from the tunnel container, so all visitors would share one limit. Tell nginx to trust the visitor address Cloudflare sends, from the compose network only, and publish the port on this machine only (otherwise someone reaching it directly could, on some setups, forge that header):
+
+```bash
+docker network inspect "$(basename "$PWD" | tr 'A-Z' 'a-z')_default" -f '{{(index .IPAM.Config 0).Subnet}}'
+```
+
+```bash
+TRUSTED_PROXY=<that subnet> PORT=127.0.0.1:5000 CLOUDFLARE_TUNNEL_TOKEN=<token> docker compose --profile cloudflare up -d
+```
 
 ## Podman
 

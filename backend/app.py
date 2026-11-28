@@ -9,6 +9,7 @@ from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 
 from backend.cache import build_cache
+from backend.params import BadRequest, parse_dates, parse_movie_query
 from backend.store import DataSourceError, build_store
 
 BUILD_DIR = os.path.join('..', 'frontend', 'build')
@@ -18,8 +19,8 @@ CORS(app)
 app.config.from_prefixed_env()
 app.static_folder = app.config.get('FRONTEND_PATH', BUILD_DIR)
 
-# Pages of at most this many movies are cached; bigger answers (e.g. the whole
-# dataset) are not, to keep the memory used by the cache bounded.
+# Pages of at most this many movies are cached; bigger answers (the statistics page's
+# 500 movies) are not, to keep the memory used by the cache bounded.
 MAX_CACHED_PAGE_SIZE = 100
 
 # csv (default), postgres or auto: DATA_SOURCE
@@ -63,18 +64,23 @@ def _answer(source, kind, args, method, cacheable=True):
     return response
 
 
+@app.errorhandler(BadRequest)
+def bad_request(error):
+    return jsonify({"message": str(error)}), 400
+
+
 @app.route('/allmovies', methods=['GET'])
 def serve_movies():
     """
     Return a paginated list of movies with optional filtering and sorting.
 
-    Query parameters:
+    Query parameters (checked by backend/params.py; a bad value is answered with 400):
         start (int): Pagination start index.
-        end (int): Pagination end index.
+        end (int): Pagination end index, at most MAX_PAGE_SIZE after start (the default).
         title (str): Case-insensitive title search.
         genre (list[str]): One or more genres to match.
         lang (str): Original language code.
-        score (float): Minimum vote average.
+        score (float): Minimum vote average, 0 to 10.
         dates (list[int]): Release year range [start, end).
         order_by (str): Sort field.
         order_desc (str): Sort direction ('asc' or 'desc').
@@ -83,22 +89,11 @@ def serve_movies():
         JSON response containing matching movies, total count,
         available genres, dataset minimum year, and metric maxima.
     """
+    n_start, n_end, *filters = parse_movie_query(request.args)   # before any data is read
+
     def handler(source):
-        n_total = source.total()
-        n_start = int(request.args.get("start", 0))
-        n_end = min(int(request.args.get("end", n_total + 1)), n_total + 1)
-        args = (
-            n_start,
-            n_end,
-            str(request.args.get("title", "")),
-            tuple(sorted(request.args.getlist("genre"))),  # "any of" semantics: order is irrelevant
-            str(request.args.get("lang", "")),
-            float(request.args.get("score", 0.)),
-            tuple(request.args.getlist("dates")),
-            request.args.get("order_by"),
-            request.args.get("order_desc", "asc"),
-        )
-        return _answer(source, "allmovies", args, "query_movies", cacheable=n_end - n_start <= MAX_CACHED_PAGE_SIZE)
+        args = (n_start, min(n_end, source.total() + 1), *filters)
+        return _answer(source, "allmovies", args, "query_movies", cacheable=args[1] - n_start <= MAX_CACHED_PAGE_SIZE)
 
     return _with_source(handler)
 
@@ -106,8 +101,8 @@ def serve_movies():
 @app.route('/statistics', methods=['GET'])
 def serve_stats():
     # tests : curl http://127.0.0.1:5000/statistics
-    # curl http://127.0.0.1:5000/statistics?dates=1990&dates=2020
-    dates = tuple(request.args.getlist("dates"))
+    # curl "http://127.0.0.1:5000/statistics?dates=1990&dates=2020"
+    dates = parse_dates(request.args)
     return _with_source(lambda source: _answer(source, "statistics", (dates,), "statistics"))
 
 

@@ -99,6 +99,14 @@ services:
       # makes the image export the container's nameserver(s) as NGINX_LOCAL_RESOLVERS,
       # which the template below uses (Docker and Podman do not use the same DNS address)
       NGINX_ENTRYPOINT_LOCAL_RESOLVERS: "1"
+      # Used by the template below; all four must always have a value.
+      # API requests per client address: sustained rate, and how many may come at once.
+      NGINX_API_RATE: ${API_RATE_LIMIT:-10r/s}
+      NGINX_API_BURST: ${API_RATE_BURST:-40}
+      # 1: clients may skip the response cache with "X-No-Cache: 1" (load tests only).
+      NGINX_ALLOW_CACHE_BYPASS: ${ALLOW_CACHE_BYPASS:-0}
+      # Address range of a proxy whose CF-Connecting-IP header gives the real client (see the README).
+      NGINX_TRUSTED_PROXY: ${TRUSTED_PROXY:-127.0.0.1/32}
     volumes:
       # a template: the image renders it into /etc/nginx/conf.d/default.conf at startup.
       # ":z" relabels the file for SELinux hosts (Fedora, RHEL...) and does nothing elsewhere.

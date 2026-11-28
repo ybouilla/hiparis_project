@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Box, Chip, Rating, Slider, Tooltip, Typography } from "@mui/material";
 import LanguageSelector from "./LanguageSelector";
 
@@ -27,6 +28,11 @@ export default function FilterPanel({
   yearRange,
   setYearRange,
 }) {
+  // The slider shows its own value while it is dragged, and hands it over on release: one request
+  // per choice, not one per year passed over (the API limits the number of requests).
+  const [draftYears, setDraftYears] = useState(yearRange);
+  useEffect(() => setDraftYears(yearRange), [yearRange]);   // changed elsewhere, e.g. filter removed
+
   return (
     <Box sx={{ px: 2, pb: 2 }}>
       <Section title="Genres" hint="Displays movies with at least one of the following">
@@ -67,17 +73,18 @@ export default function FilterPanel({
 
       <Section title="Release years" hint="Year of release">
         <Slider
-          value={yearRange}
+          value={draftYears}
           min={minDate}
           max={new Date().getFullYear()}
           step={1}
           valueLabelDisplay="auto"
           disableSwap
-          onChange={(_, value) => setYearRange(value)}
+          onChange={(_, value) => setDraftYears(value)}
+          onChangeCommitted={(_, value) => setYearRange(value)}
           sx={{ "& .MuiSlider-valueLabel": { zIndex: 9999 } }}
         />
         <Typography variant="caption" color="text.secondary">
-          {yearRange[0]} – {yearRange[1]}
+          {draftYears[0]} – {draftYears[1]}
         </Typography>
       </Section>
     </Box>
