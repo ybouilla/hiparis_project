@@ -54,7 +54,7 @@ flowchart LR
 | `tests-backend` | `pytest`: the API (status, title, language and score filters), the two-level cache (against a fake memcached server) and the loader | a test fails |
 | `stress-test` | gunicorn started locally, then Locust for 2 minutes with 100 users | any request is not a `201` with the expected JSON key (Locust then exits with code 1) |
 | `docker-test` | builds the Docker image, then (1) runs the image's own tests (`MODE=test`, in the foreground, so a failing test fails the job), (2) starts the container and waits until it answers, (3) smoke-tests it: the React build and its JavaScript are served, the API answers `201`, a language filter and a sort are really applied, the cache answers `miss` then `memory`, the process is not root and gunicorn uses the threaded workers, (4) load-tests it with Locust (100 users, 2 minutes) | the image does not build, a test fails, a smoke check fails, or a Locust request fails |
-| `scalability-test` | see the diagram below | a step fails, or a replica received no request |
+| `scalability-test` | see the diagram below. Last, with the default settings again: bad parameters get 400, `X-No-Cache` is refused, and a burst of requests gets 429 (the other load-testing jobs relax these protections, as all their requests come from one address) | a step fails, or a replica received no request |
 | `cloudflare-quick-tunnel-test` | 4 replicas behind a temporary `trycloudflare.com` URL (no account needed), Locust through it, every replica must have received requests | same as above, except that up to 5 % of Cloudflare 530 answers (tunnel unreachable for a moment) only raise a warning (`scripts/check_tunnel_failures.py`); skipped with a warning if Cloudflare gives no tunnel or never publishes its DNS record |
 | `cloudflare-test` | the same through your own tunnel and domain. Skipped unless the repository has the `CLOUDFLARE_TUNNEL_TOKEN` secret and the `CLOUDFLARE_URL` variable, and on pull requests from forks | a load-test request fails |
 | `podman-test` | the stack on rootless Podman: it starts, the API answers, nginx's cache and memcached work, the containers do not run as root | a step fails (the job does not block the others yet: `continue-on-error`) |
@@ -75,7 +75,7 @@ The Locust test is not a single request: each simulated user waits 1 to 2 second
 | `filtered` | 4 | title, genres, language, minimum score and year range, chosen at random |
 | `sorted` | 2 | a random sort field and direction |
 | `statistics` | 2 | `/statistics`, with or without a year range |
-| `all_movies` | 1 | no parameter: the whole dataset, the worst case |
+| `all_movies` | 1 | no parameter: the largest page (500 movies), the worst case |
 
 What `scalability-test` does, step by step:
 

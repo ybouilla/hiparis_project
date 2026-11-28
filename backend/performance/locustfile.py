@@ -85,5 +85,5 @@ class MovieUser(HttpUser):
 
     @task(1)
     def all_movies(self):
-        """Worst case: no parameters returns the whole dataset."""
+        """Worst case: no parameters returns the largest page (500 movies)."""
         self._get("/allmovies", "/allmovies [all]", "movies")

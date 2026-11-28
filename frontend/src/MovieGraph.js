@@ -194,6 +194,7 @@ function MovieGraph() {
   const min_date = 1940;
    const [movies2, setMovies2] = useState([] );
    const [yearRange2, setYearRange2] = useState([1900, 2025]);
+   const [draftYears, setDraftYears] = useState(yearRange2);  // the slider, while it is dragged
    const [totalMovies2, setTotalMovies2] = useState(500); // nb of points displayed for graph
    const [stats, setStats] = useState({
     'Popularity': exBoxplotStats,
@@ -466,13 +467,15 @@ console.log("genredata2", genreData)
           </Box>
           <Slider
             data-testid="release-year-slider"
-            value={yearRange2}
+            value={draftYears}
             min={minDate2}
             max={2025}
             step={1}
             valueLabelDisplay="auto"
             
-            onChange={(_, value) => setYearRange2(value)}
+            // the label follows the drag; the data is requested once, on release
+            onChange={(_, value) => setDraftYears(value)}
+            onChangeCommitted={(_, value) => setYearRange2(value)}
           />
        
       </Box>
