@@ -97,7 +97,9 @@ class CsvStore:
             df = df[mask]
         if len(genre) > 0:
             wanted = {g.lower() for g in genre}
-            mask = df["Genre_List"].apply(lambda genres: any(g.lower() in wanted for g in genres))
+            # astype: on a table already emptied by the title filter, apply() gives a non-boolean column,
+            # which pandas would read as a list of columns to keep (and the next filter would crash)
+            mask = df["Genre_List"].apply(lambda genres: any(g.lower() in wanted for g in genres)).astype(bool)
             df = df[mask]
         if language:
             df = df[df["Original_Language"] == language]
